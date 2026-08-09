@@ -69,6 +69,8 @@ TRANSIENT_HTTP_STATUSES = (502, 503, 504)
 RECENT_LIMIT = 20
 SEARCH_RESULT_LIMIT = 20
 MAX_SEARCH_QUERY = 60
+MAX_QUICK_PATH = 60
+BROWSE_PATH_RE = re.compile(r"^[A-Za-z0-9_+-]+(?:/[A-Za-z0-9_+-]+)*$")
 MAX_RESPONSE_BYTES = 250000
 CA_BUNDLE_CANDIDATES = (
     "/etc/ssl/certs/ca-certificates.crt",
@@ -606,7 +608,8 @@ def child_categories(categories, parent_path):
 
 def fetch_browse(path=""):
     """Fetch one level of Aminet's tree, or packages at a leaf path."""
-    if path and not re.match(r"^[A-Za-z0-9_+-]+(?:/[A-Za-z0-9_+-]+)*$", path):
+    path = normalize_browse_path(path)
+    if path is None:
         raise AminetDoorError("Aminet returned an unsafe browse path.")
     query = urllib.parse.urlencode({"path": path}) if path else ""
     raw = http_get(TREE_URL + ("?" + query if query else ""))
@@ -881,6 +884,8 @@ def normalize_key(key):
         return "root"
     if isinstance(value, str) and value.upper() == "S":
         return "search"
+    if isinstance(value, str) and value.upper() == "J":
+        return "jump"
     if isinstance(value, str) and value.upper() == "N":
         return "next"
     if isinstance(value, str) and value.upper() == "P":
@@ -1107,9 +1112,34 @@ def choose_browse_entry(items, path):
         items,
         title=title,
         formatter=formatter,
-        controls="Up/Down Move   Enter Open   B Back   R Root   ESC/Q Exit",
-        extra_actions=("back", "root"),
+        controls="Up/Down Move  Enter Open  B Back  R Root  J Jump  ESC/Q Exit",
+        extra_actions=("back", "root", "jump"),
     )
+
+
+def normalize_browse_path(value):
+    """Normalize a safe category path, returning None for invalid input."""
+    if not isinstance(value, str):
+        return None
+    value = value.strip().rstrip("/")
+    if not value:
+        return ""
+    return value if BROWSE_PATH_RE.fullmatch(value) else None
+
+
+def read_quick_path():
+    """Prompt for a validated Browse category path, or return None."""
+    heading("Browse")
+    bbs.writeln("|07Jump to Aminet path:")
+    bbs.write("|15> ")
+    value = read_text_input(MAX_QUICK_PATH)
+    if value is None or not value.strip():
+        return None
+    path = normalize_browse_path(value)
+    if path is None:
+        show_error("Invalid Aminet path.")
+        return None
+    return path
 
 
 def browse_path_after_action(path, action, selected=None):
@@ -1143,6 +1173,19 @@ def browse():
             path = browse_path_after_action(path, selected)
             if path is None:
                 return
+        elif selected == "jump":
+            target_path = read_quick_path()
+            if target_path is None:
+                continue
+            try:
+                target_categories, target_packages = fetch_browse(target_path)
+            except AminetDoorError as exc:
+                show_error(str(exc))
+                continue
+            if not target_categories and not target_packages:
+                show_error("No Aminet category found for that path.")
+                continue
+            path = target_path
         elif selected is None:
             return
         elif selected.get("kind") == "category":

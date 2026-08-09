@@ -1,5 +1,11 @@
 # Changelog
 
+## M1.3 Quick Path
+
+- Added `J` in Browse to jump directly to validated Aminet category paths.
+- Quick Path reuses Browse retrieval, architecture filtering, and existing
+  hierarchy semantics.
+
 ## M1.2 Local README cache
 
 - Added a bounded JSON cache for package README text with a 24-hour default TTL.

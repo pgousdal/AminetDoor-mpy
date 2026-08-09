@@ -44,6 +44,7 @@ cache/filesystem failure must never prevent core door functionality.
 - B       Back one hierarchy level, where applicable
 - R       Return to root, where applicable
 - S       Search / New search, where applicable
+- J       Jump directly to a validated category path, where applicable
 
 ESC is the primary navigation convention.
 

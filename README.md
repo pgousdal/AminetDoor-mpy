@@ -74,9 +74,10 @@ S  Search Aminet
 ```
 
 Browse follows Aminet's public category tree. Within Browse, `B` goes back one
-level and `R` returns to the root. Search uses Aminet's public search interface
-with a maximum query length of 60 characters. Both modes open the same README
-reader as Recent.
+level, `R` returns to the root, and `J` jumps directly to a category path such
+as `game/shoot`, `comm/net`, or `dev/cross`. Search uses Aminet's public search
+interface with a maximum query length of 60 characters. Both modes open the
+same README reader as Recent.
 
 Architecture filtering is configured in `aminetdoor.mpy`:
 

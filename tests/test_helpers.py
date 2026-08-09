@@ -644,6 +644,7 @@ class SelectorTests(unittest.TestCase):
         self.assertEqual(aminetdoor.normalize_key(("x", False)), "unknown")
         self.assertEqual(aminetdoor.normalize_key("N"), "next")
         self.assertEqual(aminetdoor.normalize_key("P"), "previous")
+        self.assertEqual(aminetdoor.normalize_key("J"), "jump")
 
     def test_selector_mode_dispatch_and_invalid_fallback(self):
         with mock.patch.object(aminetdoor, "RESULT_SELECTOR", "lightbar"), \
@@ -690,6 +691,51 @@ class SelectorTests(unittest.TestCase):
         self.assertIsNone(aminetdoor.browse_path_after_action("", "back"))
         self.assertNotEqual(aminetdoor.normalize_key("B"),
                             aminetdoor.normalize_key(aminetdoor.ESC))
+
+    def test_quick_path_validation(self):
+        for value in ("game", "game/shoot", "comm/net", "dev/cross", "util/arc"):
+            self.assertEqual(aminetdoor.normalize_browse_path(value), value)
+        self.assertEqual(aminetdoor.normalize_browse_path(" game/shoot/ "),
+                         "game/shoot")
+        for value in ("../game", "/game", "game//shoot", "game/../shoot",
+                      "http://aminet.net/tree", "game?x=1"):
+            self.assertIsNone(aminetdoor.normalize_browse_path(value))
+
+    def test_quick_path_prompt_escape_and_empty_cancel(self):
+        with mock.patch.object(aminetdoor.bbs, "getkey", return_value=aminetdoor.ESC):
+            self.assertIsNone(aminetdoor.read_quick_path())
+        with mock.patch.object(aminetdoor.bbs, "getkey", return_value="\r"):
+            self.assertIsNone(aminetdoor.read_quick_path())
+        with mock.patch.object(aminetdoor.bbs, "getkey",
+                              side_effect=list("game/shoot/") + ["\r"]):
+            self.assertEqual(aminetdoor.read_quick_path(), "game/shoot")
+
+    def test_browse_quick_path_success_then_back_and_root_semantics(self):
+        category = {"kind": "category", "path": "game"}
+        package = {"title": "Package", "path": "game/shoot/package"}
+        with mock.patch.object(aminetdoor, "read_quick_path", return_value="game/shoot"), \
+                mock.patch.object(aminetdoor, "choose_browse_entry",
+                                  side_effect=["jump", "back", None]), \
+                mock.patch.object(aminetdoor, "fetch_browse",
+                                  side_effect=[([category], []), ([], [package]),
+                                               ([], [package]), ([category], [])]) as fetch:
+            aminetdoor.browse()
+        self.assertEqual([item.args[0] for item in fetch.call_args_list],
+                         ["", "game/shoot", "game/shoot", "game"])
+
+    def test_failed_quick_path_keeps_current_browse_state(self):
+        category = {"kind": "category", "path": "game"}
+        with mock.patch.object(aminetdoor, "read_quick_path", return_value="missing/path"), \
+                mock.patch.object(aminetdoor, "choose_browse_entry",
+                                  side_effect=["jump", None]), \
+                mock.patch.object(aminetdoor, "fetch_browse",
+                                  side_effect=[([category], []), ([], []),
+                                               ([category], [])]) as fetch, \
+                mock.patch.object(aminetdoor, "show_error") as show_error:
+            aminetdoor.browse()
+        self.assertEqual([item.args[0] for item in fetch.call_args_list],
+                         ["", "missing/path", ""])
+        show_error.assert_called_once_with("No Aminet category found for that path.")
 
     def test_lightbar_enter_and_quit(self):
         with mock.patch.object(aminetdoor, "render_lightbar"), \
