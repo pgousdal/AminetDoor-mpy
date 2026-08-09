@@ -1,5 +1,11 @@
 # Changelog
 
+## M1.2 Local README cache
+
+- Added a bounded JSON cache for package README text with a 24-hour default TTL.
+- Cache writes are atomic; corrupt entries are ignored and stale entries can
+  serve during transient network failures.
+
 ## Transient Aminet backend failures
 
 - Added bounded retries for HTTP 502, 503, and 504 responses with concise

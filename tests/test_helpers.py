@@ -4,10 +4,13 @@
 
 import importlib.machinery
 import importlib.util
+import json
+import os
 import pathlib
 import socket
 import ssl
 import sys
+import tempfile
 import types
 import unittest
 import urllib.error
@@ -368,13 +371,15 @@ class NetworkTests(unittest.TestCase):
     @mock.patch.object(aminetdoor.urllib.request, "urlopen")
     def test_fetch_readme_decodes_and_cleans_text(self, urlopen):
         urlopen.return_value = self.response(b"Line one\r\n\r\n\r\nLine two   with   spaces\r\n")
-        text = aminetdoor.fetch_readme("comm/net/amiagent-0.5.3")
+        with mock.patch.object(aminetdoor, "CACHE_ENABLED", False):
+            text = aminetdoor.fetch_readme("comm/net/amiagent-0.5.3")
         self.assertEqual(text, "Line one\n\nLine two with spaces")
 
     @mock.patch.object(aminetdoor.urllib.request, "urlopen")
     def test_fetch_readme_rejects_empty_result(self, urlopen):
         urlopen.return_value = self.response(b"   \n\n  ")
-        with self.assertRaisesRegex(aminetdoor.AminetDoorError, "No readable text"):
+        with mock.patch.object(aminetdoor, "CACHE_ENABLED", False), \
+                self.assertRaisesRegex(aminetdoor.AminetDoorError, "No readable text"):
             aminetdoor.fetch_readme("comm/net/amiagent-0.5.3")
 
     @mock.patch.object(aminetdoor.urllib.request, "urlopen")
@@ -426,6 +431,128 @@ class NetworkTests(unittest.TestCase):
             aminetdoor.fetch_browse("game/shoot")
         self.assertEqual(urlopen.call_args_list[1].args[0].full_url,
                          "https://aminet.net/game/shoot")
+
+
+class CacheTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.cache_patch = mock.patch.multiple(
+            aminetdoor,
+            CACHE_ENABLED=True,
+            CACHE_DIR=self.temp_dir.name,
+            CACHE_MAX_AGE_SECONDS=86400,
+        )
+        self.cache_patch.start()
+        self.addCleanup(self.cache_patch.stop)
+
+    def response(self, body_bytes):
+        return NetworkTests().response(body_bytes)
+
+    def cache_path(self, package_path):
+        return pathlib.Path(aminetdoor.readme_cache_path(package_path))
+
+    @mock.patch.object(aminetdoor.urllib.request, "urlopen")
+    def test_cache_miss_fetches_and_writes(self, urlopen):
+        package_path = "game/shoot/ADoom"
+        urlopen.return_value = self.response(b"Cached README")
+        text = aminetdoor.fetch_readme(package_path)
+        cache_path = self.cache_path(package_path)
+        self.assertEqual(text, "Cached README")
+        self.assertEqual(urlopen.call_count, 1)
+        self.assertTrue(cache_path.is_file())
+        entry = json.loads(cache_path.read_text(encoding="utf-8"))
+        self.assertEqual(entry["package_path"], package_path)
+        self.assertEqual(entry["text"], text)
+
+    @mock.patch.object(aminetdoor.urllib.request, "urlopen")
+    def test_fresh_cache_hit_avoids_network(self, urlopen):
+        package_path = "comm/net/amiagent-0.5.3"
+        urlopen.return_value = self.response(b"README text")
+        self.assertEqual(aminetdoor.fetch_readme(package_path), "README text")
+        urlopen.reset_mock()
+        self.assertEqual(aminetdoor.fetch_readme(package_path), "README text")
+        urlopen.assert_not_called()
+
+    @mock.patch.object(aminetdoor.urllib.request, "urlopen")
+    def test_stale_cache_refreshes(self, urlopen):
+        package_path = "game/shoot/old"
+        aminetdoor.write_readme_cache(package_path, "old README")
+        urlopen.return_value = self.response(b"new README")
+        with mock.patch.object(aminetdoor, "CACHE_MAX_AGE_SECONDS", -1):
+            self.assertEqual(aminetdoor.fetch_readme(package_path), "new README")
+        self.assertEqual(urlopen.call_count, 1)
+        self.assertEqual(
+            json.loads(self.cache_path(package_path).read_text(encoding="utf-8"))["text"],
+            "new README",
+        )
+
+    @mock.patch.object(aminetdoor.time, "sleep")
+    @mock.patch.object(aminetdoor.urllib.request, "urlopen")
+    def test_stale_cache_falls_back_on_transient_failure(self, urlopen, sleep):
+        package_path = "game/shoot/unavailable"
+        aminetdoor.write_readme_cache(package_path, "stale README")
+        urlopen.side_effect = [
+            urllib.error.HTTPError(aminetdoor.README_URL_TEMPLATE % package_path,
+                                   502, "Bad Gateway", {}, None)
+            for _ in range(3)
+        ]
+        with mock.patch.object(aminetdoor, "CACHE_MAX_AGE_SECONDS", -1):
+            self.assertEqual(aminetdoor.fetch_readme(package_path), "stale README")
+        self.assertEqual(urlopen.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+
+    @mock.patch.object(aminetdoor.urllib.request, "urlopen")
+    def test_corrupt_cache_entries_are_misses(self, urlopen):
+        entries = (
+            "{",
+            json.dumps({"text": "missing path", "fetched_at": 1}),
+            json.dumps({"package_path": "other", "fetched_at": 1, "text": "wrong"}),
+        )
+        urlopen.side_effect = [
+            self.response(("network %d" % index).encode("utf-8"))
+            for index in range(len(entries))
+        ]
+        for index, content in enumerate(entries):
+            package_path = "misc/cache-test-%d" % index
+            cache_path = self.cache_path(package_path)
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(content, encoding="utf-8")
+            self.assertEqual(
+                aminetdoor.fetch_readme(package_path), "network %d" % index
+            )
+        self.assertEqual(urlopen.call_count, len(entries))
+
+    @mock.patch.object(aminetdoor.urllib.request, "urlopen")
+    def test_disabled_cache_always_uses_network(self, urlopen):
+        package_path = "game/shoot/no-cache"
+        urlopen.side_effect = [self.response(b"one"), self.response(b"two")]
+        with mock.patch.object(aminetdoor, "CACHE_ENABLED", False):
+            self.assertEqual(aminetdoor.fetch_readme(package_path), "one")
+            self.assertEqual(aminetdoor.fetch_readme(package_path), "two")
+        self.assertEqual(urlopen.call_count, 2)
+        self.assertFalse(self.cache_path(package_path).exists())
+
+    def test_cache_key_cannot_escape_cache_directory(self):
+        cache_path = pathlib.Path(
+            aminetdoor.readme_cache_path("../../outside/../package")
+        )
+        self.assertEqual(os.path.commonpath((self.temp_dir.name, str(cache_path))),
+                         self.temp_dir.name)
+        self.assertRegex(cache_path.name, r"^[0-9a-f]{64}\.json$")
+
+    def test_cache_write_replaces_atomically(self):
+        package_path = "docs/help/faq"
+        with mock.patch.object(aminetdoor.os, "replace",
+                               wraps=aminetdoor.os.replace) as replace:
+            self.assertTrue(aminetdoor.write_readme_cache(package_path, "FAQ"))
+        cache_path = self.cache_path(package_path)
+        self.assertTrue(cache_path.is_file())
+        replace.assert_called_once()
+        temporary_path, final_path = replace.call_args.args
+        self.assertEqual(final_path, str(cache_path))
+        self.assertEqual(os.path.dirname(temporary_path), self.temp_dir.name)
+        self.assertEqual(list(cache_path.parent.glob("*.tmp")), [])
 
 
 class ArchitectureTests(unittest.TestCase):

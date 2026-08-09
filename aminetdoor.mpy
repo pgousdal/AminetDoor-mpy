@@ -10,13 +10,16 @@ No third-party Python packages required.
 
 import html
 import errno
+import hashlib
 from html.parser import HTMLParser
+import json
 import os
 import re
 import socket
 import ssl
 import sys
 import textwrap
+import tempfile
 import time
 import unicodedata
 import urllib.error
@@ -77,12 +80,23 @@ VISIBLE_RESULT_ROWS = 12
 TEXT_WIDTH = 76
 PAGE_LINES = 16
 MAX_README_BYTES = 40000
+CACHE_ENABLED = True
+CACHE_DIR = "cache/readme"
+CACHE_MAX_AGE_SECONDS = 86400
 DEBUG_KEYS = False
 DEBUG_NETWORK = False
 
 
 class AminetDoorError(Exception):
     """Expected AminetDoor/network error."""
+
+
+class AminetTransientError(AminetDoorError):
+    """A temporary upstream HTTP failure suitable for stale-cache fallback."""
+
+
+class AminetTransportError(AminetDoorError):
+    """A transport failure suitable for stale-cache fallback."""
 
 
 class AminetMarkupError(AminetDoorError):
@@ -183,22 +197,22 @@ def http_get(url, max_bytes=MAX_RESPONSE_BYTES, diagnostics=None):
                 continue
             debug_http_final_failure(url, exc)
             if exc.code in TRANSIENT_HTTP_STATUSES:
-                raise AminetDoorError(
+                raise AminetTransientError(
                     "Aminet is temporarily unavailable (HTTP %s)." % exc.code
                 )
             raise AminetDoorError("Aminet returned HTTP %s." % exc.code)
         except urllib.error.URLError as exc:
             debug_network_error(url, exc)
-            raise AminetDoorError(classify_network_error(exc.reason))
+            raise AminetTransportError(classify_network_error(exc.reason))
         except (socket.timeout, TimeoutError) as exc:
             debug_network_error(url, exc)
-            raise AminetDoorError("Aminet request timed out.")
+            raise AminetTransportError("Aminet request timed out.")
         except ssl.SSLError as exc:
             debug_network_error(url, exc)
-            raise AminetDoorError("TLS connection to Aminet failed.")
+            raise AminetTransportError("TLS connection to Aminet failed.")
         except OSError as exc:
             debug_network_error(url, exc)
-            raise AminetDoorError(classify_network_error(exc))
+            raise AminetTransportError(classify_network_error(exc))
 
 
 def debug_http_attempt(url, attempt, total_attempts, status, exc):
@@ -640,9 +654,29 @@ def fetch_search(query):
 
 
 def fetch_readme(path):
-    """Fetch the plain-text .readme file for a package path."""
+    """Return a package README from a fresh cache or Aminet."""
+    stale_text = None
+    if CACHE_ENABLED:
+        cached = read_readme_cache(path)
+        if cached is not None:
+            cached_text, fresh = cached
+            if fresh:
+                debug_cache("README cache hit")
+                return cached_text
+            stale_text = cached_text
+            debug_cache("README cache stale")
+        else:
+            debug_cache("README cache miss")
+
     url = README_URL_TEMPLATE % path
-    raw = http_get(url)
+    try:
+        raw = http_get(url)
+    except AminetDoorError as exc:
+        if stale_text is not None and isinstance(
+                exc, (AminetTransientError, AminetTransportError)):
+            debug_cache("README stale fallback used")
+            return stale_text
+        raise
     if len(raw) > MAX_README_BYTES:
         raw = raw[:MAX_README_BYTES]
     try:
@@ -652,7 +686,98 @@ def fetch_readme(path):
     text = clean_extract(text)
     if not text:
         raise AminetDoorError("No readable text was returned.")
+    if CACHE_ENABLED:
+        if write_readme_cache(path, text):
+            debug_cache("README cache refreshed")
+        else:
+            debug_cache("README cache write skipped")
     return text
+
+
+def cache_directory():
+    """Resolve relative cache configuration beside the installed script."""
+    if os.path.isabs(CACHE_DIR):
+        return CACHE_DIR
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(script_dir, CACHE_DIR)
+
+
+def readme_cache_path(package_path):
+    """Return a safe hashed JSON cache path for a canonical package path."""
+    key = hashlib.sha256(package_path.encode("utf-8")).hexdigest()
+    return os.path.join(cache_directory(), key + ".json")
+
+
+def read_readme_cache(package_path):
+    """Read and validate one cache entry, returning (text, fresh) or None."""
+    cache_path = readme_cache_path(package_path)
+    max_file_bytes = MAX_README_BYTES * 6 + 4096
+    try:
+        if os.path.getsize(cache_path) > max_file_bytes:
+            return None
+        with open(cache_path, "r", encoding="utf-8") as stream:
+            payload = stream.read(max_file_bytes + 1)
+        if len(payload.encode("utf-8")) > max_file_bytes:
+            return None
+        entry = json.loads(payload)
+        if not isinstance(entry, dict):
+            return None
+        if entry.get("package_path") != package_path:
+            return None
+        fetched_at = entry.get("fetched_at")
+        text = entry.get("text")
+        if (isinstance(fetched_at, bool)
+                or not isinstance(fetched_at, (int, float))
+                or not isinstance(text, str)
+                or len(text.encode("utf-8")) > MAX_README_BYTES):
+            return None
+        text = clean_extract(text)
+        if not text:
+            return None
+        fresh = time.time() - fetched_at <= CACHE_MAX_AGE_SECONDS
+        return text, fresh
+    except (OSError, TypeError, ValueError, UnicodeError):
+        return None
+
+
+def write_readme_cache(package_path, text):
+    """Atomically write one validated README cache entry when possible."""
+    if len(text.encode("utf-8")) > MAX_README_BYTES:
+        return False
+    directory = cache_directory()
+    cache_path = readme_cache_path(package_path)
+    temporary_path = None
+    try:
+        os.makedirs(directory, exist_ok=True)
+        payload = json.dumps({
+            "package_path": package_path,
+            "fetched_at": time.time(),
+            "text": text,
+        }, ensure_ascii=True, separators=(",", ":"))
+        descriptor, temporary_path = tempfile.mkstemp(
+            prefix=".readme-", suffix=".tmp", dir=directory
+        )
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_path, cache_path)
+        temporary_path = None
+        return True
+    except (OSError, TypeError, ValueError, UnicodeError):
+        return False
+    finally:
+        if temporary_path is not None:
+            try:
+                os.unlink(temporary_path)
+            except OSError:
+                pass
+
+
+def debug_cache(message):
+    """Log cache state only in developer diagnostics mode."""
+    if DEBUG_NETWORK:
+        bbs.writeln("|08%s" % message)
 
 
 def line(char="-"):

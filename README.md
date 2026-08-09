@@ -9,6 +9,7 @@ Python 3 (`.mpy`) script.
 - Browse Aminet's category hierarchy and package listings
 - Search Aminet by package name or keyword
 - Architecture-aware Browse and Search, defaulting to 68k AmigaOS + generic
+- Local README cache with 24-hour freshness and stale-on-transient fallback
 - Lightbar selection from the recent-uploads list
 - Numbered selection compatibility mode
 - Paged, terminal-friendly README reader (76-column wrapping, 16-line pages)
@@ -89,6 +90,19 @@ architectures. The filter applies to Browse package lists and Search; Recent
 remains unfiltered because its RSS feed does not expose reliable architecture
 metadata.
 
+README text caching is configured in the same script:
+
+```python
+CACHE_ENABLED = True
+CACHE_DIR = "cache/readme"
+CACHE_MAX_AGE_SECONDS = 86400
+```
+
+The cache is resolved beside `aminetdoor.mpy`, stores only bounded JSON README
+text, and uses stale content if a refresh fails at the network layer. Cached
+package content remains subject to its original authors' copyright and
+licensing terms.
+
 Recent uploads (default lightbar selector):
 
 ```text
@@ -136,10 +150,10 @@ with Python's standard-library `html.parser` and are bounded before parsing.
 
 ## Scope
 
-M1.1 intentionally stays read-only. It does not include interactive
-architecture selection, local README caching, a "package of the day" random
-spotlight, screenshots, downloads, uploads, or account functionality. See
-`docs/M1.md`.
+M1.2 intentionally stays read-only. It does not include interactive
+architecture selection, package archive caching, a "package of the day"
+random spotlight, screenshots, downloads, uploads, or account functionality.
+See `docs/M1.md`.
 
 Automated/offline validation: complete. Live Mystic validation: pending.
 

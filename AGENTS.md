@@ -17,7 +17,10 @@ AminetDoor is a small Mystic BBS Python 3 door for browsing Aminet.
 - Do not perform uploads, edits, or any write operation against Aminet.
 - Treat all remote HTML as untrusted input and bound response reads.
 - Keep Browse/Search read-only; do not add downloads, uploads, credentials,
-  cookies, caching, or mirror operations.
+  cookies, search/Browse caching, or mirror operations. The configured local
+  README-text cache is the exception for this milestone.
+- Cache only bounded README text as JSON; never cache archives, HTML, RSS, or
+  executable content.
 - Architecture filtering is SysOp configuration in `aminetdoor.mpy`; it must
   use verified Aminet metadata or form fields, not filename inference.
 
