@@ -8,6 +8,13 @@
 - Added stdlib HTML parsing, offline fixtures, and browse/search documentation.
 - Live Mystic validation remains pending.
 
+## M1 Fix
+
+- Fixed Browse child-category parsing for Aminet's direct relative links such
+  as `game/shoot`; root links still use `tree?path=`.
+- Added safe same-host category URL normalization and clearer markup failures.
+- Verified live Browse, Search, and README probes from the development host.
+
 ## M0.2
 
 - Added a configurable lightbar result selector, defaulting to `lightbar`.

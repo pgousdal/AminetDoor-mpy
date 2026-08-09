@@ -38,10 +38,15 @@ TEXT_WIDTH = 76
 PAGE_LINES = 16
 MAX_README_BYTES = 40000
 DEBUG_KEYS = False
+DEBUG_NETWORK = False
 
 
 class AminetDoorError(Exception):
     """Expected AminetDoor/network error."""
+
+
+class AminetMarkupError(AminetDoorError):
+    """Aminet responded successfully but not in a recognized page format."""
 
 
 def terminal_text(value):
@@ -219,10 +224,16 @@ def html_text(raw_html):
 
 
 def _category_path(href):
-    parsed = urllib.parse.urlparse(urllib.parse.urljoin(TREE_URL, href))
-    if parsed.path.rstrip("/") != "/tree":
+    resolved = urllib.parse.urljoin("https://aminet.net/", href)
+    parsed = urllib.parse.urlparse(resolved)
+    if parsed.netloc.lower() not in ("aminet.net", "www.aminet.net"):
         return ""
-    path = urllib.parse.parse_qs(parsed.query).get("path", [""])[0].strip("/")
+    if parsed.path.rstrip("/") == "/tree":
+        path = urllib.parse.parse_qs(parsed.query).get("path", [""])[0].strip("/")
+    else:
+        path = parsed.path.strip("/")
+        if len(path.split("/")) < 2:
+            return ""
     if not re.match(r"^[A-Za-z0-9_+-]+(?:/[A-Za-z0-9_+-]+)*$", path):
         return ""
     return path
@@ -286,6 +297,17 @@ def parse_aminet_html(raw_html):
         if package and package["path"] not in seen_packages:
             packages.append(package)
             seen_packages.add(package["path"])
+    if not categories and not packages:
+        page_text = html_text(raw_html).lower()
+        recognized = (
+            "aminet - " in page_text
+            or "found 0 matching packages" in page_text
+            or 'id="start_listing"' in page_text
+        )
+        if not recognized:
+            raise AminetMarkupError(
+                "Aminet returned a page format this version could not read."
+            )
     return categories, packages
 
 
@@ -311,6 +333,10 @@ def fetch_browse(path=""):
     if path and not categories:
         raw = http_get(CATEGORY_URL_TEMPLATE % urllib.parse.quote(path, safe="/"))
         _, packages = parse_aminet_html(raw)
+    if DEBUG_NETWORK:
+        bbs.writeln("|08Browse URL: %s" % (TREE_URL + ("?" + query if query else "")))
+        bbs.writeln("|08Parsed categories: %d" % len(categories))
+        bbs.writeln("|08Parsed packages: %d" % len(packages))
     return categories, packages
 
 
@@ -325,9 +351,14 @@ def build_search_url(query, page=1):
 
 def fetch_search(query):
     """Fetch the first page of Aminet's public search results."""
-    raw = http_get(build_search_url(query))
+    url = build_search_url(query)
+    raw = http_get(url)
     _, packages = parse_aminet_html(raw)
-    return packages[:SEARCH_RESULT_LIMIT]
+    packages = packages[:SEARCH_RESULT_LIMIT]
+    if DEBUG_NETWORK:
+        bbs.writeln("|08Search URL: %s" % url)
+        bbs.writeln("|08Search result count: %d" % len(packages))
+    return packages
 
 
 def fetch_readme(path):

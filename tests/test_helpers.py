@@ -55,6 +55,8 @@ SAMPLE_BROWSE = """
 <ul>
 <li><a href="/tree?path=game">game</a> - Games (7673 packages)</li>
 <li><a href="/tree?path=game/shoot">game/shoot</a> - Shoot-em-up games (756 packages)</li>
+<li><a href="game/2play">game/2play</a> - 2 and more player games (304 packages)</li>
+<li><a href="/setup">Setup</a></li>
 <li><a href="/tree?path=bad">bad</a></li>
 </ul>
 <table>
@@ -78,6 +80,11 @@ SAMPLE_SEARCH = """
 <td>game/shoot</td><td>1.1M</td><td><a href="/package/game/shoot/BOOM_RTG">A long description that &amp; is safe - (readme)</a></td></tr>
 <tr><td>broken</td></tr>
 </table></body></html>
+"""
+
+SAMPLE_SEARCH_EMPTY = """
+<html><head><title>Aminet - Search</title></head>
+<body><font>Found 0 matching packages</font></body></html>
 """
 
 
@@ -139,7 +146,7 @@ class HTMLParsingTests(unittest.TestCase):
     def test_category_filter_keeps_immediate_children(self):
         categories, _ = aminetdoor.parse_aminet_html(SAMPLE_BROWSE.encode("latin-1"))
         self.assertEqual([item["path"] for item in aminetdoor.child_categories(categories, "game")],
-                         ["game/shoot"])
+                         ["game/shoot", "game/2play"])
         self.assertEqual(aminetdoor.child_categories(categories, "game/shoot"), [])
 
     def test_search_parser_skips_malformed_rows_and_decodes_entities(self):
@@ -147,6 +154,16 @@ class HTMLParsingTests(unittest.TestCase):
         self.assertEqual(len(packages), 2)
         self.assertEqual(packages[1]["title"], "BOOM_RTG.lha")
         self.assertIn("&", packages[1]["description"])
+
+    def test_search_parser_accepts_zero_result_page(self):
+        self.assertEqual(aminetdoor.parse_aminet_html(SAMPLE_SEARCH_EMPTY.encode("latin-1")),
+                         ([], []))
+
+    def test_category_href_formats_are_restricted_to_aminet(self):
+        self.assertEqual(aminetdoor._category_path("tree?path=game"), "game")
+        self.assertEqual(aminetdoor._category_path("game/shoot"), "game/shoot")
+        self.assertEqual(aminetdoor._category_path("//evil.example/game/shoot"), "")
+        self.assertEqual(aminetdoor._category_path("/setup"), "")
 
     def test_search_parser_keeps_long_fields_for_ui_truncation(self):
         long_title = "LONG_PACKAGE_NAME_" + ("x" * 100) + ".lha"
@@ -159,7 +176,11 @@ class HTMLParsingTests(unittest.TestCase):
         self.assertGreater(len(packages[1]["description"]), 100)
 
     def test_empty_html_has_no_entries(self):
-        self.assertEqual(aminetdoor.parse_aminet_html(b"<html><body></body></html>"), ([], []))
+        self.assertEqual(aminetdoor.parse_aminet_html(
+            b"<html><title>Aminet - Browse</title><body></body></html>"
+        ), ([], []))
+        with self.assertRaises(aminetdoor.AminetMarkupError):
+            aminetdoor.parse_aminet_html(b"<html><body>not Aminet</body></html>")
 
 
 class NetworkTests(unittest.TestCase):
