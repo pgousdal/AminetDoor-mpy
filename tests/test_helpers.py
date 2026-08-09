@@ -634,6 +634,56 @@ class ArchitectureTests(unittest.TestCase):
         self.assertEqual(merged[1]["description"], "Complete")
 
 
+class PackageOfDayTests(unittest.TestCase):
+    def setUp(self):
+        self.items = [
+            {"title": "Package %d" % index, "path": "game/shoot/package-%d" % index}
+            for index in range(1, 8)
+        ]
+
+    def test_package_of_day_is_deterministic_and_order_independent(self):
+        selected = aminetdoor.package_of_day(self.items, "2026-08-09")
+        self.assertEqual(selected, aminetdoor.package_of_day(self.items, "2026-08-09"))
+        self.assertEqual(
+            selected,
+            aminetdoor.package_of_day(list(reversed(self.items)), "2026-08-09"),
+        )
+        different_days = {
+            aminetdoor.package_of_day(self.items, "2026-08-%02d" % day)["path"]
+            for day in range(1, 31)
+        }
+        self.assertGreater(len(different_days), 1)
+
+    def test_package_of_day_handles_empty_and_single_candidates(self):
+        self.assertIsNone(aminetdoor.package_of_day([]))
+        self.assertEqual(
+            aminetdoor.package_of_day([self.items[0]], "2026-08-09"), self.items[0]
+        )
+        self.assertIsNone(aminetdoor.package_of_day([{}, {"title": "No path"}]))
+
+    def test_main_menu_package_day_action_is_distinct(self):
+        self.assertEqual(aminetdoor.normalize_menu_key("P"), "package_day")
+
+    def test_package_of_day_enter_uses_existing_readme_flow(self):
+        item = self.items[0]
+        with mock.patch.object(aminetdoor, "fetch_recent", return_value=[item]), \
+                mock.patch.object(aminetdoor, "package_of_day", return_value=item), \
+                mock.patch.object(aminetdoor, "render_package_of_day"), \
+                mock.patch.object(aminetdoor, "read_readme") as read_readme, \
+                mock.patch.object(aminetdoor.bbs, "onekey",
+                                  side_effect=["\r", aminetdoor.ESC]):
+            aminetdoor.show_package_of_day()
+        read_readme.assert_called_once_with(item["title"], item["path"])
+
+    def test_package_of_day_empty_recent_is_safe(self):
+        with mock.patch.object(aminetdoor, "fetch_recent", return_value=[]), \
+                mock.patch.object(aminetdoor, "show_error") as show_error:
+            aminetdoor.show_package_of_day()
+        show_error.assert_called_once_with(
+            "No packages are available for today's spotlight."
+        )
+
+
 class SelectorTests(unittest.TestCase):
     def setUp(self):
         self.items = [{"title": "Package %d" % i, "path": "pkg/%d" % i}

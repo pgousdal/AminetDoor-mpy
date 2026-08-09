@@ -11,6 +11,7 @@ No third-party Python packages required.
 import html
 import errno
 import hashlib
+from datetime import date
 from html.parser import HTMLParser
 import json
 import os
@@ -453,6 +454,38 @@ def fetch_recent():
         raise
     debug_recent_diagnostics(diagnostics, len(items), None)
     return items
+
+
+def package_of_day(items, date_value=None):
+    """Choose one stable daily package from a Recent candidate pool."""
+    if date_value is None:
+        date_value = date.today().isoformat()
+    elif hasattr(date_value, "isoformat"):
+        date_value = date_value.isoformat()
+    else:
+        date_value = str(date_value)
+
+    candidates = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        path = item.get("path")
+        if isinstance(path, str) and path.strip():
+            candidates.setdefault(path.strip(), item)
+    ordered = [candidates[path] for path in sorted(candidates)]
+    if not ordered:
+        return None
+    scores = [
+        hashlib.sha256((date_value + "\n" + item["path"]).encode("utf-8")).digest()
+        for item in ordered
+    ]
+    index = 0
+    best_score = scores[0]
+    for candidate_index, score in enumerate(scores[1:], 1):
+        if score < best_score:
+            best_score = score
+            index = candidate_index
+    return ordered[index]
 
 
 def debug_recent_diagnostics(diagnostics, item_count, error):
@@ -947,6 +980,8 @@ def normalize_key(key):
 def normalize_menu_key(key):
     """Translate main-menu keys without changing Browse's R meaning."""
     action = normalize_key(key)
+    if key_value(key) in ("P", "p"):
+        return "package_day"
     if action == "root":
         return "recent"
     if action == "unknown" and key_value(key) in ("A", "a"):
@@ -1155,6 +1190,55 @@ def show_recent():
         read_readme(selected["title"], selected["path"])
 
 
+def render_package_of_day(item):
+    """Render the compact Package of the Day spotlight screen."""
+    heading("Package of the Day")
+    bbs.writeln("|08Spotlight for %s" % date.today().isoformat())
+    bbs.writeln("")
+    title = terminal_text(item.get("title") or item.get("path", ""))
+    bbs.writeln("|11" + title[:72])
+    bbs.writeln("")
+    bbs.writeln("|07Path: " + terminal_text(item.get("path", "")))
+    description = terminal_text(item.get("description", ""))
+    if description:
+        bbs.writeln("|07Description:")
+        for text_line in wrap_text(description, width=72)[:4]:
+            bbs.writeln("|07" + text_line)
+    bbs.writeln("")
+    bbs.writeln("|08" + line("-"))
+    bbs.writeln("|15[ENTER]|07 Read README   |15[R]|07 Another package   |15[ESC/Q]|07 Back")
+
+
+def show_package_of_day():
+    """Show a deterministic daily Recent package and optional alternatives."""
+    try:
+        items = fetch_recent()
+    except AminetDoorError as exc:
+        show_error(str(exc))
+        return
+    if not items:
+        show_error("No packages are available for today's spotlight.")
+        return
+
+    candidates = [item for item in items if isinstance(item, dict) and item.get("path")]
+    selected = package_of_day(candidates)
+    if selected is None:
+        show_error("No packages are available for today's spotlight.")
+        return
+    selected_index = candidates.index(selected)
+    while True:
+        render_package_of_day(selected)
+        action = normalize_key(bbs.onekey("R" + chr(13) + ESC, False))
+        if action == "enter":
+            read_readme(selected.get("title", selected["path"]), selected["path"])
+        elif action == "root":
+            if len(candidates) > 1:
+                selected_index = (selected_index + 1) % len(candidates)
+                selected = candidates[selected_index]
+        elif action == "quit":
+            return
+
+
 def choose_browse_entry(items, path):
     """Select a browse category/package while honoring browse controls."""
     title = "Browse" if not path else "Browse: " + path
@@ -1312,12 +1396,13 @@ def main():
         bbs.writeln("|15 [R]|07 Recent uploads")
         bbs.writeln("|15 [B]|07 Browse Aminet")
         bbs.writeln("|15 [S]|07 Search Aminet")
+        bbs.writeln("|15 [P]|07 Package of the Day")
         bbs.writeln("|15 [A]|07 About")
         bbs.writeln("|15 [Q]|07 Return to BBS")
         bbs.writeln("")
         bbs.writeln("|08ESCAPE returns to BBS")
         bbs.write("|11Select: |15")
-        action = normalize_menu_key(bbs.onekey("RBSAQ" + ESC, True))
+        action = normalize_menu_key(bbs.onekey("RBSPAQ" + ESC, True))
 
         if action == "quit":
             clear_screen()
@@ -1330,6 +1415,8 @@ def main():
             browse()
         elif action == "search":
             search()
+        elif action == "package_day":
+            show_package_of_day()
 
 
 if __name__ == "__main__":

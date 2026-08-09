@@ -1,5 +1,10 @@
 # Changelog
 
+## M1.5 Package of the Day
+
+- Added a deterministic daily spotlight sourced from the existing Recent feed.
+- Reuses the current README reader and cache without adding another endpoint.
+
 ## M1.3 Quick Path
 
 - Added `J` in Browse to jump directly to validated Aminet category paths.

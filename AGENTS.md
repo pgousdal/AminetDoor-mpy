@@ -26,6 +26,8 @@ AminetDoor is a small Mystic BBS Python 3 door for browsing Aminet.
 - The inline Aminet category catalog is navigation-only; package listings must
   remain live and the catalog should be updated deliberately against Aminet's
   public Browse tree.
+- Package of the Day must use the existing Recent candidate pool and stable
+  date/path hashing; do not infer architecture or add another endpoint.
 
 ## Mystic Python Runtime Compatibility
 

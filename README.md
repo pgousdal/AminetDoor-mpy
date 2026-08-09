@@ -62,15 +62,11 @@ Main menu:
 
 ```text
 R  Recent uploads
-A  About
-Q  Return to BBS
-```
-
-Main menu also provides:
-
-```text
 B  Browse Aminet
 S  Search Aminet
+P  Package of the Day
+A  About
+Q  Return to BBS
 ```
 
 Browse navigation uses an inline catalog mirroring Aminet's public category
@@ -91,6 +87,10 @@ independent Aminet content. Set `ARCHITECTURE_FILTER = None` to show all
 architectures. The filter applies to Browse package lists and Search; Recent
 remains unfiltered because its RSS feed does not expose reliable architecture
 metadata.
+
+Package of the Day selects one deterministic package from the current Recent
+feed. All callers see the same spotlight for the same local calendar day. Its
+candidate pool inherits Recent's unfiltered architecture behavior.
 
 README text caching is configured in the same script:
 
