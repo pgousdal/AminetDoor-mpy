@@ -5,6 +5,8 @@
 import importlib.machinery
 import importlib.util
 import pathlib
+import socket
+import ssl
 import sys
 import types
 import unittest
@@ -205,6 +207,9 @@ class NetworkTests(unittest.TestCase):
         self.assertEqual(len(items), 2)
         request = urlopen.call_args.args[0]
         self.assertEqual(request.get_header("User-agent"), aminetdoor.USER_AGENT)
+        self.assertIn("text/html", request.get_header("Accept"))
+        self.assertEqual(request.get_header("Accept-encoding"), "identity")
+        self.assertEqual(request.get_header("Connection"), "close")
         self.assertEqual(urlopen.call_args.kwargs["timeout"], aminetdoor.HTTP_TIMEOUT)
 
     @mock.patch.object(aminetdoor.urllib.request, "urlopen")
@@ -216,15 +221,42 @@ class NetworkTests(unittest.TestCase):
             aminetdoor.fetch_recent()
 
     @mock.patch.object(aminetdoor.urllib.request, "urlopen")
-    def test_url_error_becomes_connection_error(self, urlopen):
-        urlopen.side_effect = urllib.error.URLError("offline")
-        with self.assertRaisesRegex(aminetdoor.AminetDoorError, "Could not reach Aminet"):
+    def test_http_403_and_404_keep_status(self, urlopen):
+        for status in (403, 404, 429, 500):
+            urlopen.side_effect = urllib.error.HTTPError(
+                "https://aminet.net/feed", status, "Unavailable", {}, None
+            )
+            with self.assertRaisesRegex(aminetdoor.AminetDoorError, "HTTP %d" % status):
+                aminetdoor.fetch_recent()
+
+    @mock.patch.object(aminetdoor.urllib.request, "urlopen")
+    def test_dns_error_is_classified(self, urlopen):
+        urlopen.side_effect = urllib.error.URLError(socket.gaierror(-2, "Name or service not known"))
+        with self.assertRaisesRegex(aminetdoor.AminetDoorError, "Could not resolve aminet.net"):
             aminetdoor.fetch_recent()
 
     @mock.patch.object(aminetdoor.urllib.request, "urlopen")
-    def test_timeout_becomes_timeout_error(self, urlopen):
-        urlopen.side_effect = TimeoutError()
+    def test_tls_error_is_classified(self, urlopen):
+        urlopen.side_effect = urllib.error.URLError(ssl.SSLError("certificate verify failed"))
+        with self.assertRaisesRegex(aminetdoor.AminetDoorError, "TLS connection"):
+            aminetdoor.fetch_recent()
+
+    @mock.patch.object(aminetdoor.urllib.request, "urlopen")
+    def test_connection_refused_is_classified(self, urlopen):
+        urlopen.side_effect = urllib.error.URLError(ConnectionRefusedError(111, "refused"))
+        with self.assertRaisesRegex(aminetdoor.AminetDoorError, "was refused"):
+            aminetdoor.fetch_recent()
+
+    @mock.patch.object(aminetdoor.urllib.request, "urlopen")
+    def test_timeout_is_classified(self, urlopen):
+        urlopen.side_effect = urllib.error.URLError(socket.timeout("timed out"))
         with self.assertRaisesRegex(aminetdoor.AminetDoorError, "timed out"):
+            aminetdoor.fetch_recent()
+
+    @mock.patch.object(aminetdoor.urllib.request, "urlopen")
+    def test_generic_network_error_is_classified(self, urlopen):
+        urlopen.side_effect = urllib.error.URLError(OSError("network down"))
+        with self.assertRaisesRegex(aminetdoor.AminetDoorError, "network request failed"):
             aminetdoor.fetch_recent()
 
     @mock.patch.object(aminetdoor.urllib.request, "urlopen")

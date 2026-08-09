@@ -58,10 +58,27 @@ Aminet.
 Confirm Mystic's embedded Python 3 configuration and that the Python bitness
 matches Mystic.
 
-### Could not reach Aminet
+### Aminet network diagnostics
 
-Check DNS, HTTPS connectivity, firewall policy and outbound TCP/443 from the
-Mystic host.
+Recent, Browse, and Search share the same HTTPS transport. From the Mystic
+host, check DNS, HTTPS connectivity, firewall policy, and outbound TCP/443:
+
+```bash
+curl -v https://aminet.net/feed
+curl -v https://aminet.net/tree
+curl -v https://aminet.net/search
+python3 scripts/check_aminet.py
+```
+
+The diagnostic script reports DNS/connection status, HTTP status, final URL,
+content type, and safe exception reason details. In the door,
+`DEBUG_NETWORK = True` enables additional request and exception diagnostics;
+leave it `False` during normal caller sessions.
+
+The door distinguishes DNS, TLS, refused-connection, timeout, HTTP-status, and
+generic network failures. A shared failure across all three features usually
+indicates a Mystic host or network environment issue rather than an Aminet
+parser issue.
 
 ### Aminet request timed out
 
