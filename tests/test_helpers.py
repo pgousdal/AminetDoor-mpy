@@ -50,6 +50,36 @@ SAMPLE_FEED = """<?xml version="1.0" encoding="UTF-8"?>
 </rss>
 """
 
+SAMPLE_BROWSE = """
+<html><body>
+<ul>
+<li><a href="/tree?path=game">game</a> - Games (7673 packages)</li>
+<li><a href="/tree?path=game/shoot">game/shoot</a> - Shoot-em-up games (756 packages)</li>
+<li><a href="/tree?path=bad">bad</a></li>
+</ul>
+<table>
+<tr><th>name</th><th>version</th></tr>
+<tr>
+ <td><a href="/game/shoot/BOOM_AGA.lha">BOOM_AGA.lha</a></td>
+ <td>2.0.2.21</td><td>game/shoot</td><td>4118</td><td>1.1M</td>
+ <td><a href="/package/game/shoot/BOOM_AGA">Amiga port of BOOM (DOOM) &amp; more - (readme)</a></td>
+</tr>
+<tr><td>incomplete</td></tr>
+</table>
+</body></html>
+"""
+
+SAMPLE_SEARCH = """
+<html><body><table>
+<tr><th>name</th><th>version</th><th>path</th><th>size</th><th>desc</th></tr>
+<tr><td><a href="/game/shoot/BOOM_AGA.lha">BOOM_AGA.lha</a></td><td>2.0.2.21</td>
+<td>game/shoot</td><td>1.1M</td><td><a href="/package/game/shoot/BOOM_AGA">Amiga &amp; DOOM - (readme)</a></td></tr>
+<tr><td><a href="/game/shoot/BOOM_RTG.lha">BOOM_RTG.lha</a></td><td></td>
+<td>game/shoot</td><td>1.1M</td><td><a href="/package/game/shoot/BOOM_RTG">A long description that &amp; is safe - (readme)</a></td></tr>
+<tr><td>broken</td></tr>
+</table></body></html>
+"""
+
 
 class HelperTests(unittest.TestCase):
     def test_common_punctuation_is_normalized(self):
@@ -93,6 +123,43 @@ class FeedParsingTests(unittest.TestCase):
     def test_parse_recent_feed_rejects_malformed_xml(self):
         with self.assertRaises(aminetdoor.AminetDoorError):
             aminetdoor.parse_recent_feed("<rss><channel><item>")
+
+
+class HTMLParsingTests(unittest.TestCase):
+    def test_parse_browse_categories_and_packages(self):
+        categories, packages = aminetdoor.parse_aminet_html(SAMPLE_BROWSE.encode("latin-1"))
+        self.assertEqual(categories[0]["path"], "game")
+        self.assertEqual(categories[0]["description"], "Games")
+        self.assertEqual(categories[1]["path"], "game/shoot")
+        self.assertEqual(len(packages), 1)
+        self.assertEqual(packages[0]["title"], "BOOM_AGA.lha")
+        self.assertEqual(packages[0]["path"], "game/shoot/BOOM_AGA")
+        self.assertIn("&", packages[0]["description"])
+
+    def test_category_filter_keeps_immediate_children(self):
+        categories, _ = aminetdoor.parse_aminet_html(SAMPLE_BROWSE.encode("latin-1"))
+        self.assertEqual([item["path"] for item in aminetdoor.child_categories(categories, "game")],
+                         ["game/shoot"])
+        self.assertEqual(aminetdoor.child_categories(categories, "game/shoot"), [])
+
+    def test_search_parser_skips_malformed_rows_and_decodes_entities(self):
+        _, packages = aminetdoor.parse_aminet_html(SAMPLE_SEARCH.encode("latin-1"))
+        self.assertEqual(len(packages), 2)
+        self.assertEqual(packages[1]["title"], "BOOM_RTG.lha")
+        self.assertIn("&", packages[1]["description"])
+
+    def test_search_parser_keeps_long_fields_for_ui_truncation(self):
+        long_title = "LONG_PACKAGE_NAME_" + ("x" * 100) + ".lha"
+        long_description = "description " + ("y" * 180)
+        fixture = SAMPLE_SEARCH.replace("BOOM_RTG.lha", long_title).replace(
+            "A long description that &amp; is safe", long_description
+        )
+        _, packages = aminetdoor.parse_aminet_html(fixture.encode("latin-1"))
+        self.assertGreater(len(packages[1]["title"]), 80)
+        self.assertGreater(len(packages[1]["description"]), 100)
+
+    def test_empty_html_has_no_entries(self):
+        self.assertEqual(aminetdoor.parse_aminet_html(b"<html><body></body></html>"), ([], []))
 
 
 class NetworkTests(unittest.TestCase):
@@ -143,6 +210,27 @@ class NetworkTests(unittest.TestCase):
         urlopen.return_value = self.response(b"   \n\n  ")
         with self.assertRaisesRegex(aminetdoor.AminetDoorError, "No readable text"):
             aminetdoor.fetch_readme("comm/net/amiagent-0.5.3")
+
+    @mock.patch.object(aminetdoor.urllib.request, "urlopen")
+    def test_fetch_browse_uses_tree_then_leaf_endpoint(self, urlopen):
+        tree_response = self.response(SAMPLE_BROWSE.encode("latin-1"))
+        leaf_response = self.response(SAMPLE_SEARCH.encode("latin-1"))
+        urlopen.side_effect = [tree_response, leaf_response]
+        categories, packages = aminetdoor.fetch_browse("game/shoot")
+        self.assertEqual(categories, [])
+        self.assertEqual(len(packages), 2)
+        self.assertIn("/tree?path=game%2Fshoot", urlopen.call_args_list[0].args[0].full_url)
+        self.assertEqual(urlopen.call_args_list[1].args[0].full_url,
+                         "https://aminet.net/game/shoot")
+
+    @mock.patch.object(aminetdoor.urllib.request, "urlopen")
+    def test_fetch_search_is_bounded_and_parsed(self, urlopen):
+        urlopen.return_value = self.response(SAMPLE_SEARCH.encode("latin-1"))
+        packages = aminetdoor.fetch_search(" doom & amiga ")
+        self.assertEqual(len(packages), 2)
+        self.assertEqual(urlopen.call_args.args[0].full_url,
+                         "https://aminet.net/search?query=doom+%26+amiga")
+        self.assertEqual(urlopen.call_args.kwargs["timeout"], aminetdoor.HTTP_TIMEOUT)
 
 
 class SelectorTests(unittest.TestCase):
@@ -197,6 +285,13 @@ class SelectorTests(unittest.TestCase):
         self.assertEqual(state[:2], (11, 8))
         state = aminetdoor.move_selector(8, 8, "up", 20)
         self.assertEqual(state[:2], (7, 7))
+
+    def test_browse_path_navigation(self):
+        category = {"kind": "category", "path": "game"}
+        self.assertEqual(aminetdoor.browse_path_after_action("", "enter", category), "game")
+        self.assertEqual(aminetdoor.browse_path_after_action("game/shoot", "back"), "game")
+        self.assertEqual(aminetdoor.browse_path_after_action("game", "root"), "")
+        self.assertIsNone(aminetdoor.browse_path_after_action("", "back"))
 
     def test_lightbar_enter_and_quit(self):
         with mock.patch.object(aminetdoor, "render_lightbar"), \

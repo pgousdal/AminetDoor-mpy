@@ -4,11 +4,12 @@
 AminetDoor M0
 A small Aminet reader for Mystic BBS using Mystic Python 3.
 
-M0 slice: Recent uploads (via Aminet's RSS feed) and a paged README reader.
+M1 slice: Recent uploads, Browse, Search, and a paged README reader.
 No third-party Python packages required.
 """
 
 import html
+from html.parser import HTMLParser
 import re
 import textwrap
 import unicodedata
@@ -22,9 +23,15 @@ import mystic_bbs as bbs
 VERSION = "0.1.0"
 FEED_URL = "https://aminet.net/feed"
 README_URL_TEMPLATE = "https://aminet.net/%s.readme"
+TREE_URL = "https://aminet.net/tree"
+CATEGORY_URL_TEMPLATE = "https://aminet.net/%s"
+SEARCH_URL = "https://aminet.net/search"
 USER_AGENT = "AminetDoor/0.1.0 (Mystic BBS door; https://github.com/pgousdal/AminetDoor-mpy)"
 HTTP_TIMEOUT = 10
 RECENT_LIMIT = 20
+SEARCH_RESULT_LIMIT = 20
+MAX_SEARCH_QUERY = 60
+MAX_RESPONSE_BYTES = 250000
 RESULT_SELECTOR = "lightbar"  # "lightbar" or "numbered"
 VISIBLE_RESULT_ROWS = 12
 TEXT_WIDTH = 76
@@ -85,7 +92,7 @@ def wrap_text(value, width=TEXT_WIDTH):
     return lines
 
 
-def http_get(url):
+def http_get(url, max_bytes=MAX_RESPONSE_BYTES):
     """Perform a GET request and return the raw response bytes."""
     request = urllib.request.Request(
         url,
@@ -93,7 +100,8 @@ def http_get(url):
     )
     try:
         with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT) as response:
-            return response.read()
+            raw = response.read(max_bytes + 1)
+            return raw[:max_bytes]
     except urllib.error.HTTPError as exc:
         raise AminetDoorError("Aminet returned HTTP %s." % exc.code)
     except urllib.error.URLError:
@@ -147,6 +155,179 @@ def fetch_recent():
     """Fetch and parse the Aminet recent-uploads RSS feed."""
     raw = http_get(FEED_URL)
     return parse_recent_feed(raw)
+
+
+class AminetHTMLParser(HTMLParser):
+    """Extract Aminet category links and package table rows."""
+
+    def __init__(self):
+        HTMLParser.__init__(self, convert_charrefs=True)
+        self.categories = []
+        self.rows = []
+        self._anchor = None
+        self._cell = None
+        self._row = None
+        self._li = None
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == "a":
+            self._anchor = [attrs.get("href", ""), []]
+        elif tag == "tr":
+            self._row = []
+        elif tag == "td" and self._row is not None:
+            self._cell = [[], []]
+        elif tag == "li":
+            self._li = [[], None]
+
+    def handle_data(self, data):
+        if self._anchor is not None:
+            self._anchor[1].append(data)
+        if self._cell is not None:
+            self._cell[0].append(data)
+        if self._li is not None:
+            self._li[0].append(data)
+
+    def handle_endtag(self, tag):
+        if tag == "a" and self._anchor is not None:
+            href, text = self._anchor
+            if self._cell is not None:
+                self._cell[1].append((href, clean_extract(" ".join(text))))
+            if self._li is not None and href:
+                self._li[1] = (href, clean_extract(" ".join(text)))
+            self._anchor = None
+        elif tag == "td" and self._cell is not None:
+            self._row.append((clean_extract(" ".join(self._cell[0])), self._cell[1]))
+            self._cell = None
+        elif tag == "tr" and self._row is not None:
+            if self._row:
+                self.rows.append(self._row)
+            self._row = None
+        elif tag == "li" and self._li is not None:
+            if self._li[1] is not None:
+                href, title = self._li[1]
+                self.categories.append((href, title, clean_extract(" ".join(self._li[0]))))
+            self._li = None
+
+
+def html_text(raw_html):
+    """Decode Aminet's legacy HTML response for the stdlib parser."""
+    try:
+        return raw_html.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw_html.decode("latin-1", "replace")
+
+
+def _category_path(href):
+    parsed = urllib.parse.urlparse(urllib.parse.urljoin(TREE_URL, href))
+    if parsed.path.rstrip("/") != "/tree":
+        return ""
+    path = urllib.parse.parse_qs(parsed.query).get("path", [""])[0].strip("/")
+    if not re.match(r"^[A-Za-z0-9_+-]+(?:/[A-Za-z0-9_+-]+)*$", path):
+        return ""
+    return path
+
+
+def _package_from_row(row):
+    if len(row) < 5:
+        return None
+    links = [link for _, cell_links in row for link in cell_links]
+    detail_link = next((href for href, _ in links if href.startswith("/package/")), "")
+    if not detail_link:
+        return None
+    file_link, file_title = next(
+        ((href, text) for href, text in links
+         if href.startswith("/") and not href.startswith(("/package/", "/tree", "/search"))
+         and not href.endswith(".readme")),
+        ("", ""),
+    )
+    path = package_path_from_link(detail_link)
+    if not path:
+        return None
+    description = row[-1][0]
+    description = re.sub(r"\s+-\s+\(readme\)\s*$", "", description)
+    return {
+        "title": file_title or path.rsplit("/", 1)[-1],
+        "path": path,
+        "description": clean_extract(description),
+        "version": row[1][0] if len(row) > 1 else "",
+        "size": row[4][0] if len(row) > 4 else "",
+        "link": urllib.parse.urljoin(TREE_URL, file_link or detail_link),
+    }
+
+
+def parse_aminet_html(raw_html):
+    """Parse category links and package rows from an Aminet HTML page."""
+    parser = AminetHTMLParser()
+    try:
+        parser.feed(html_text(raw_html))
+        parser.close()
+    except (ValueError, TypeError):
+        raise AminetDoorError("Aminet returned unreadable browse/search data.")
+
+    categories = []
+    seen_categories = set()
+    for href, title, full_text in parser.categories:
+        path = _category_path(href)
+        if not path or path in seen_categories:
+            continue
+        description = full_text
+        if " - " in description:
+            description = description.split(" - ", 1)[1]
+        description = re.sub(r"\s*\(\d+ packages\)\s*$", "", description)
+        categories.append({"kind": "category", "title": path, "path": path,
+                           "description": clean_extract(description), "link": href})
+        seen_categories.add(path)
+
+    packages = []
+    seen_packages = set()
+    for row in parser.rows:
+        package = _package_from_row(row)
+        if package and package["path"] not in seen_packages:
+            packages.append(package)
+            seen_packages.add(package["path"])
+    return categories, packages
+
+
+def child_categories(categories, parent_path):
+    """Keep only immediate children of a browse path."""
+    parent_parts = [part for part in parent_path.strip("/").split("/") if part]
+    result = []
+    for category in categories:
+        parts = category["path"].split("/")
+        if parts[:len(parent_parts)] == parent_parts and len(parts) == len(parent_parts) + 1:
+            result.append(category)
+    return result
+
+
+def fetch_browse(path=""):
+    """Fetch one level of Aminet's tree, or packages at a leaf path."""
+    if path and not re.match(r"^[A-Za-z0-9_+-]+(?:/[A-Za-z0-9_+-]+)*$", path):
+        raise AminetDoorError("Aminet returned an unsafe browse path.")
+    query = urllib.parse.urlencode({"path": path}) if path else ""
+    raw = http_get(TREE_URL + ("?" + query if query else ""))
+    categories, packages = parse_aminet_html(raw)
+    categories = child_categories(categories, path)
+    if path and not categories:
+        raw = http_get(CATEGORY_URL_TEMPLATE % urllib.parse.quote(path, safe="/"))
+        _, packages = parse_aminet_html(raw)
+    return categories, packages
+
+
+def build_search_url(query, page=1):
+    """Build Aminet's public GET search URL with bounded user input."""
+    query = terminal_text(query).strip()[:MAX_SEARCH_QUERY]
+    values = {"query": query}
+    if page > 1:
+        values["page"] = page
+    return SEARCH_URL + "?" + urllib.parse.urlencode(values)
+
+
+def fetch_search(query):
+    """Fetch the first page of Aminet's public search results."""
+    raw = http_get(build_search_url(query))
+    _, packages = parse_aminet_html(raw)
+    return packages[:SEARCH_RESULT_LIMIT]
 
 
 def fetch_readme(path):
@@ -220,6 +401,12 @@ def normalize_selector_key(key):
         return "enter"
     if isinstance(value, str) and value.upper() == "Q":
         return "quit"
+    if isinstance(value, str) and value.upper() == "B":
+        return "back"
+    if isinstance(value, str) and value.upper() == "R":
+        return "root"
+    if isinstance(value, str) and value.upper() == "S":
+        return "search"
     return "unknown"
 
 
@@ -297,28 +484,53 @@ def read_readme(package_title, path):
             return
 
 
-def render_lightbar(items, selected_index, viewport_start):
-    heading("Recent uploads")
+def package_display(item):
+    """Format compact package metadata for an 80-column result row."""
+    title = terminal_text(item.get("title", ""))
+    version = terminal_text(item.get("version", ""))
+    size = terminal_text(item.get("size", ""))
+    description = terminal_text(item.get("description", ""))
+    suffix = "  ".join(part for part in (version, size) if part)
+    if suffix:
+        suffix = "  " + suffix
+    text = title + suffix
+    if description:
+        text += "  " + description
+    return text
+
+
+def category_display(item):
+    title = terminal_text(item.get("title", ""))
+    description = terminal_text(item.get("description", ""))
+    return title + ("  " + description if description else "")
+
+
+def render_lightbar(items, selected_index, viewport_start, title="Recent uploads",
+                    formatter=None, controls="Up/Down Move   Enter Read   Q Back"):
+    heading(title)
+    formatter = formatter or (lambda item: item.get("title", ""))
     visible_end = min(viewport_start + VISIBLE_RESULT_ROWS, len(items))
     for index in range(viewport_start, visible_end):
         marker = ">  " if index == selected_index else "   "
-        title = terminal_text(items[index].get("title", ""))
+        row_text = terminal_text(formatter(items[index]))
         width = 76 - len(marker)
-        if len(title) > width:
-            title = title[:max(0, width - 3)] + "..."
-        bbs.writeln("|15%s|07%s" % (marker, title))
+        if len(row_text) > width:
+            row_text = row_text[:max(0, width - 3)] + "..."
+        bbs.writeln("|15%s|07%s" % (marker, row_text))
     for _ in range(VISIBLE_RESULT_ROWS - (visible_end - viewport_start)):
         bbs.writeln("")
     bbs.writeln("|08" + line("-"))
-    bbs.writeln("|11Up/Down Move   Enter Read   |15Q|11 Back")
+    bbs.writeln("|11%s" % controls)
 
 
-def choose_result_lightbar(items):
+def choose_result_lightbar(items, title="Recent uploads", formatter=None,
+                           controls="Up/Down Move   Enter Read   Q Back",
+                           extra_actions=()):
     """Select an item using Mystic's native extended-key input."""
     selected_index = 0
     viewport_start = 0
     while True:
-        render_lightbar(items, selected_index, viewport_start)
+        render_lightbar(items, selected_index, viewport_start, title, formatter, controls)
         action = normalize_selector_key(bbs.getkey())
         selected_index, viewport_start, action = move_selector(
             selected_index, viewport_start, action, len(items)
@@ -327,6 +539,8 @@ def choose_result_lightbar(items):
             return items[selected_index]
         if action == "quit":
             return None
+        if action in extra_actions:
+            return action
 
 
 def render_numbered(items, page):
@@ -394,6 +608,91 @@ def show_recent():
         read_readme(selected["title"], selected["path"])
 
 
+def choose_browse_entry(items, path):
+    """Select a browse category/package while honoring browse controls."""
+    title = "Browse" if not path else "Browse: " + path
+    formatter = category_display if items and items[0].get("kind") == "category" else package_display
+    return choose_result_lightbar(
+        items,
+        title=title,
+        formatter=formatter,
+        controls="Up/Down Move   Enter Open   B Back   R Root   Q Quit",
+        extra_actions=("back", "root"),
+    )
+
+
+def browse_path_after_action(path, action, selected=None):
+    """Return the next browse path, or None when Browse should exit."""
+    if action == "root":
+        return ""
+    if action == "back":
+        if "/" in path:
+            return path.rsplit("/", 1)[0]
+        return "" if path else None
+    if isinstance(selected, dict) and selected.get("kind") == "category":
+        return selected.get("path", path)
+    return path
+
+
+def browse():
+    """Browse Aminet's category tree and package listings."""
+    path = ""
+    while True:
+        try:
+            categories, packages = fetch_browse(path)
+        except AminetDoorError as exc:
+            show_error(str(exc))
+            return
+        entries = categories or packages
+        if not entries:
+            show_error("No browse entries were returned.")
+            return
+        selected = choose_browse_entry(entries, path)
+        if selected in ("back", "root"):
+            path = browse_path_after_action(path, selected)
+            if path is None:
+                return
+        elif selected is None:
+            return
+        elif selected.get("kind") == "category":
+            path = browse_path_after_action(path, "enter", selected)
+        else:
+            read_readme(selected["title"], selected["path"])
+
+
+def search():
+    """Prompt for bounded queries and display Aminet search results."""
+    while True:
+        heading("Search Aminet")
+        bbs.writeln("|07Enter a package name or keyword (max %d characters)." % MAX_SEARCH_QUERY)
+        bbs.writeln("|08Q returns to the main menu.")
+        bbs.write("|11Search: |15")
+        query = terminal_text(bbs.getstr("", MAX_SEARCH_QUERY)).strip()
+        if not query:
+            continue
+        if query.upper() == "Q":
+            return
+        try:
+            items = fetch_search(query)
+        except AminetDoorError as exc:
+            show_error(str(exc))
+            return
+        if not items:
+            show_error("No packages matched that search.")
+            continue
+        selected = choose_result_lightbar(
+            items,
+            title="Search: " + query,
+            formatter=package_display,
+            controls="Up/Down Move   Enter Read   S New search   Q Back",
+            extra_actions=("search",),
+        )
+        if selected == "search":
+            continue
+        if selected is not None:
+            read_readme(selected["title"], selected["path"])
+
+
 def about():
     heading("About")
     bbs.writeln("|07AminetDoor is an open-source Aminet browser for Mystic BBS.")
@@ -418,11 +717,13 @@ def main():
         heading("Main menu")
         bbs.writeln("")
         bbs.writeln("|15 [R]|07 Recent uploads")
+        bbs.writeln("|15 [B]|07 Browse Aminet")
+        bbs.writeln("|15 [S]|07 Search Aminet")
         bbs.writeln("|15 [A]|07 About")
         bbs.writeln("|15 [Q]|07 Return to BBS")
         bbs.writeln("")
         bbs.write("|11Select: |15")
-        key = bbs.onekey("RAQ", True).upper()
+        key = bbs.onekey("RBSAQ", True).upper()
 
         if key == "Q":
             clear_screen()
@@ -431,6 +732,10 @@ def main():
             about()
         elif key == "R":
             show_recent()
+        elif key == "B":
+            browse()
+        elif key == "S":
+            search()
 
 
 if __name__ == "__main__":

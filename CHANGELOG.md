@@ -1,5 +1,13 @@
 # Changelog
 
+## M1
+
+- Added read-only Browse navigation for Aminet categories and package lists.
+- Added bounded keyword Search using Aminet's public `/search?query=` form.
+- Reused the lightbar selector and existing README reader for both modes.
+- Added stdlib HTML parsing, offline fixtures, and browse/search documentation.
+- Live Mystic validation remains pending.
+
 ## M0.2
 
 - Added a configurable lightbar result selector, defaulting to `lightbar`.

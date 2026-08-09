@@ -40,11 +40,16 @@ Try:
 [R] Recent uploads
 ```
 
-Then select a package with Up/Down and Enter, and page through its README.
+Then use Recent, Browse, or Search to select a package with Up/Down and Enter,
+and page through its README.
 The default result selector is the lightbar. For numbered compatibility mode,
 set `RESULT_SELECTOR = "numbered"` near the top of `aminetdoor.mpy`. Both modes
 retain the 80x25 baseline layout; lightbar arrows use Mystic-native extended
 key handling.
+
+Browse follows the public Aminet category tree. Search sends a bounded query to
+Aminet's public search form; neither mode requires credentials or writes to
+Aminet.
 
 ## Troubleshooting
 

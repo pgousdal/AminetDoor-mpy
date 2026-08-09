@@ -3,9 +3,11 @@
 **AminetDoor M0.2 / v0.1.0** is a small Aminet reader written as a Mystic BBS
 Python 3 (`.mpy`) script.
 
-## M0 features
+## Features
 
 - Recent Aminet uploads, fetched from Aminet's RSS feed
+- Browse Aminet's category hierarchy and package listings
+- Search Aminet by package name or keyword
 - Lightbar selection from the recent-uploads list
 - Numbered selection compatibility mode
 - Paged, terminal-friendly README reader (76-column wrapping, 16-line pages)
@@ -59,6 +61,18 @@ A  About
 Q  Quit
 ```
 
+Main menu also provides:
+
+```text
+B  Browse Aminet
+S  Search Aminet
+```
+
+Browse follows Aminet's public category tree. Within Browse, `B` goes back one
+level and `R` returns to the root. Search uses Aminet's public simple search
+interface with a maximum query length of 60 characters. Both modes open the
+same README reader as Recent.
+
 Recent uploads (default lightbar selector):
 
 ```text
@@ -80,7 +94,7 @@ P  Previous page
 Q  Return to recent-uploads list
 ```
 
-## Data source
+## Aminet endpoints
 
 M0 uses Aminet's public RSS feed at:
 
@@ -93,12 +107,18 @@ directly from `https://aminet.net/<path>.readme`. No scraping of Aminet's
 HTML pages is performed in M0; RSS/XML is used because it is far more stable
 to parse than HTML that can change layout at any time.
 
+M1 Browse reads `GET https://aminet.net/tree` with the `path` query parameter
+for category levels, then reads `GET https://aminet.net/<category-path>` for
+leaf package listings. M1 Search reads `GET https://aminet.net/search` with
+the `query` parameter and uses `page` only for later public result pages.
+Responses are parsed with Python's standard-library `html.parser` and are
+bounded before parsing.
+
 ## Scope
 
-M0 intentionally stays small. It does not yet include category Browse,
-keyword Search, architecture filtering, local README caching, a "package of
-the day" random spotlight, or screenshot rendering. Those are good M1
-candidates -- see `docs/M0.md`.
+M1 intentionally stays read-only. It does not include architecture filtering,
+local README caching, a "package of the day" random spotlight, screenshots,
+downloads, uploads, or account functionality. See `docs/M1.md`.
 
 Automated/offline validation: complete. Live Mystic validation: pending.
 
