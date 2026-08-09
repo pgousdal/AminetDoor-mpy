@@ -1,0 +1,315 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""
+AminetDoor M0
+A small Aminet reader for Mystic BBS using Mystic Python 3.
+
+M0 slice: Recent uploads (via Aminet's RSS feed) and a paged README reader.
+No third-party Python packages required.
+"""
+
+import html
+import re
+import textwrap
+import unicodedata
+import urllib.error
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
+
+import mystic_bbs as bbs
+
+VERSION = "0.1.0"
+FEED_URL = "https://aminet.net/feed"
+README_URL_TEMPLATE = "https://aminet.net/%s.readme"
+USER_AGENT = "AminetDoor/0.1.0 (Mystic BBS door; https://github.com/pgousdal/AminetDoor-mpy)"
+HTTP_TIMEOUT = 10
+RECENT_LIMIT = 20
+TEXT_WIDTH = 76
+PAGE_LINES = 16
+MAX_README_BYTES = 40000
+
+
+class AminetDoorError(Exception):
+    """Expected AminetDoor/network error."""
+
+
+def terminal_text(value):
+    """Return conservative terminal-friendly text without control characters."""
+    if value is None:
+        return ""
+    value = html.unescape(str(value))
+    value = value.replace("\r\n", "\n").replace("\r", "\n")
+    value = value.replace("\u00a0", " ")
+    value = value.replace("\u2018", "'").replace("\u2019", "'")
+    value = value.replace("\u201c", '"').replace("\u201d", '"')
+    value = value.replace("\u2013", "-").replace("\u2014", "--")
+    value = value.replace("\u2026", "...")
+    value = "".join(
+        ch for ch in value
+        if ch in "\n\t" or unicodedata.category(ch) not in {"Cc", "Cf"}
+    )
+    return value
+
+
+def clean_extract(value):
+    """Clean plain text for BBS display."""
+    value = terminal_text(value)
+    value = re.sub(r"\n[ \t]+", "\n", value)
+    value = re.sub(r"[ \t]+", " ", value)
+    value = re.sub(r"\n{3,}", "\n\n", value)
+    return value.strip()
+
+
+def wrap_text(value, width=TEXT_WIDTH):
+    """Wrap paragraphs to terminal width while keeping blank lines."""
+    lines = []
+    for paragraph in clean_extract(value).split("\n"):
+        paragraph = paragraph.strip()
+        if not paragraph:
+            lines.append("")
+            continue
+        lines.extend(
+            textwrap.wrap(
+                paragraph,
+                width=width,
+                replace_whitespace=True,
+                drop_whitespace=True,
+                break_long_words=False,
+                break_on_hyphens=False,
+            ) or [""]
+        )
+    return lines
+
+
+def http_get(url):
+    """Perform a GET request and return the raw response bytes."""
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": USER_AGENT, "Accept": "*/*"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT) as response:
+            return response.read()
+    except urllib.error.HTTPError as exc:
+        raise AminetDoorError("Aminet returned HTTP %s." % exc.code)
+    except urllib.error.URLError:
+        raise AminetDoorError("Could not reach Aminet.")
+    except TimeoutError:
+        raise AminetDoorError("Aminet request timed out.")
+
+
+def package_path_from_link(link):
+    """Return the package path (dir/name, without extension) from a feed link.
+
+    Aminet RSS item links point at package pages, e.g.
+    https://aminet.net/package/comm/net/amiagent-0.5.3
+    The .readme file for that package sits alongside the download, e.g.
+    https://aminet.net/comm/net/amiagent-0.5.3.readme
+    """
+    parsed = urllib.parse.urlparse(link)
+    parts = parsed.path.strip("/").split("/")
+    if parts and parts[0] == "package":
+        parts = parts[1:]
+    return "/".join(parts)
+
+
+def parse_recent_feed(raw_xml):
+    """Parse an Aminet RSS feed into a list of recent-upload dicts."""
+    try:
+        root = ET.fromstring(raw_xml)
+    except ET.ParseError:
+        raise AminetDoorError("Aminet returned an unreadable feed.")
+
+    items = []
+    for item in root.iter("item"):
+        title_el = item.find("title")
+        link_el = item.find("link")
+        desc_el = item.find("description")
+        title = terminal_text(title_el.text) if title_el is not None else ""
+        link = (link_el.text or "").strip() if link_el is not None else ""
+        description = terminal_text(desc_el.text) if desc_el is not None else ""
+        if not title or not link:
+            continue
+        path = package_path_from_link(link)
+        if not path:
+            continue
+        items.append({"title": title, "link": link, "description": description, "path": path})
+        if len(items) >= RECENT_LIMIT:
+            break
+    return items
+
+
+def fetch_recent():
+    """Fetch and parse the Aminet recent-uploads RSS feed."""
+    raw = http_get(FEED_URL)
+    return parse_recent_feed(raw)
+
+
+def fetch_readme(path):
+    """Fetch the plain-text .readme file for a package path."""
+    url = README_URL_TEMPLATE % path
+    raw = http_get(url)
+    if len(raw) > MAX_README_BYTES:
+        raw = raw[:MAX_README_BYTES]
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1", "replace")
+    text = clean_extract(text)
+    if not text:
+        raise AminetDoorError("No readable text was returned.")
+    return text
+
+
+def line(char="-"):
+    return char * 78
+
+
+def clear_screen():
+    bbs.write("|CL")
+
+
+def heading(title):
+    clear_screen()
+    bbs.writeln("|15" + line("="))
+    bbs.writeln("|11 AminetDoor |07v%s  |08-  Aminet from your BBS" % VERSION)
+    bbs.writeln("|15" + line("="))
+    if title:
+        safe = terminal_text(title)
+        if len(safe) > 72:
+            safe = safe[:69] + "..."
+        bbs.writeln("|14 " + safe)
+        bbs.writeln("|08" + line("-"))
+
+
+def pause(message="Press any key"):
+    bbs.write("|08%s..." % message)
+    bbs.onekey(chr(13) + "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ", False)
+
+
+def show_error(message):
+    bbs.writeln("")
+    bbs.writeln("|12Error: |07" + terminal_text(message))
+    bbs.writeln("")
+    pause()
+
+
+def read_readme(package_title, path):
+    try:
+        text = fetch_readme(path)
+    except AminetDoorError as exc:
+        show_error(str(exc))
+        return
+
+    lines = wrap_text(text)
+    if not lines:
+        show_error("No readable README text was returned.")
+        return
+
+    page_count = max(1, (len(lines) + PAGE_LINES - 1) // PAGE_LINES)
+    page = 0
+
+    while True:
+        heading(package_title)
+        start = page * PAGE_LINES
+        end = min(start + PAGE_LINES, len(lines))
+        for text_line in lines[start:end]:
+            bbs.writeln("|07" + text_line)
+        for _ in range(PAGE_LINES - (end - start)):
+            bbs.writeln("")
+
+        bbs.writeln("|08" + line("-"))
+        bbs.writeln(
+            "|11Page %d/%d  |15[N]|07ext  |15[P]|07rev  |15[Q]|07uit readme"
+            % (page + 1, page_count)
+        )
+        key = bbs.onekey("NPQ", False).upper()
+        if key == "N" and page < page_count - 1:
+            page += 1
+        elif key == "P" and page > 0:
+            page -= 1
+        elif key == "Q":
+            return
+
+
+def show_recent():
+    try:
+        items = fetch_recent()
+    except AminetDoorError as exc:
+        show_error(str(exc))
+        return
+    if not items:
+        show_error("No recent uploads were returned.")
+        return
+
+    heading("Recent uploads")
+    for index, item in enumerate(items, 1):
+        title = item["title"]
+        if len(title) > 68:
+            title = title[:65] + "..."
+        bbs.writeln("|15 %2d.|07 %s" % (index, title))
+
+    bbs.writeln("")
+    bbs.writeln("|08" + line("-"))
+    valid = "".join(str(i % 10) for i in range(1, min(len(items), 9) + 1))
+    bbs.write("|11Choose package |08[1-%d] |11or |15Q|11: " % len(items))
+    key = bbs.onekey(valid + "Q", True).upper()
+    if key == "Q":
+        return
+    try:
+        index = int(key) - 1
+        selected = items[index]
+    except (ValueError, IndexError):
+        return
+    read_readme(selected["title"], selected["path"])
+
+
+def about():
+    heading("About")
+    bbs.writeln("|07AminetDoor is a small open-source Aminet reader for Mystic BBS.")
+    bbs.writeln("|07It uses Aminet's RSS feed and Python's standard library.")
+    bbs.writeln("")
+    bbs.writeln("|07No API key. No third-party Python packages.")
+    bbs.writeln("|07Package descriptions and README text come from Aminet and")
+    bbs.writeln("|07remain subject to their original authors' licensing.")
+    bbs.writeln("")
+    bbs.writeln("|08AminetDoor itself is licensed under the MIT License.")
+    bbs.writeln("")
+    pause()
+
+
+def main():
+    while True:
+        heading("Main menu")
+        bbs.writeln("")
+        bbs.writeln("|15 [R]|07 Recent uploads")
+        bbs.writeln("|15 [A]|07 About")
+        bbs.writeln("|15 [Q]|07 Return to BBS")
+        bbs.writeln("")
+        bbs.write("|11Select: |15")
+        key = bbs.onekey("RAQ", True).upper()
+
+        if key == "Q":
+            clear_screen()
+            return
+        if key == "A":
+            about()
+        elif key == "R":
+            show_recent()
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        clear_screen()
+    except Exception as exc:
+        try:
+            bbs.writeln("")
+            bbs.writeln("|12AminetDoor stopped: |07" + terminal_text(str(exc)))
+            bbs.writeln("|08Please report this to the SysOp.")
+            bbs.writeln("")
+            pause()
+        except Exception:
+            pass
