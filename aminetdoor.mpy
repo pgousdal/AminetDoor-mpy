@@ -17,6 +17,7 @@ import socket
 import ssl
 import sys
 import textwrap
+import time
 import unicodedata
 import urllib.error
 import urllib.parse
@@ -59,6 +60,9 @@ ARCHITECTURE_HOSTS = {
 }
 USER_AGENT = "AminetDoor/0.1.0 (Mystic BBS door; https://github.com/pgousdal/AminetDoor-mpy)"
 HTTP_TIMEOUT = 10
+HTTP_RETRIES = 2
+HTTP_RETRY_DELAY = 0.5
+TRANSIENT_HTTP_STATUSES = (502, 503, 504)
 RECENT_LIMIT = 20
 SEARCH_RESULT_LIMIT = 20
 MAX_SEARCH_QUERY = 60
@@ -133,7 +137,7 @@ def wrap_text(value, width=TEXT_WIDTH):
     return lines
 
 
-def http_get(url, max_bytes=MAX_RESPONSE_BYTES):
+def http_get(url, max_bytes=MAX_RESPONSE_BYTES, diagnostics=None):
     """Perform a GET request and return the raw response bytes."""
     request = urllib.request.Request(
         url,
@@ -144,26 +148,74 @@ def http_get(url, max_bytes=MAX_RESPONSE_BYTES):
             "Connection": "close",
         },
     )
-    try:
-        with urllib.request.urlopen(
-                request, timeout=HTTP_TIMEOUT, context=verified_ssl_context()) as response:
-            raw = response.read(max_bytes + 1)
-            return raw[:max_bytes]
-    except urllib.error.HTTPError as exc:
-        debug_network_error(url, exc)
-        raise AminetDoorError("Aminet returned HTTP %s." % exc.code)
-    except urllib.error.URLError as exc:
-        debug_network_error(url, exc)
-        raise AminetDoorError(classify_network_error(exc.reason))
-    except (socket.timeout, TimeoutError) as exc:
-        debug_network_error(url, exc)
-        raise AminetDoorError("Aminet request timed out.")
-    except ssl.SSLError as exc:
-        debug_network_error(url, exc)
-        raise AminetDoorError("TLS connection to Aminet failed.")
-    except OSError as exc:
-        debug_network_error(url, exc)
-        raise AminetDoorError(classify_network_error(exc))
+    attempts = HTTP_RETRIES + 1
+    if diagnostics is not None:
+        diagnostics["url"] = url
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(
+                    request, timeout=HTTP_TIMEOUT,
+                    context=verified_ssl_context()) as response:
+                raw = response.read(max_bytes + 1)
+                body = raw[:max_bytes]
+                if diagnostics is not None:
+                    diagnostics.update({
+                        "status": getattr(response, "status", 200),
+                        "bytes": len(body),
+                        "content_type": response.headers.get("Content-Type", "unknown"),
+                    })
+                debug_http_attempt(
+                    url, attempt, attempts,
+                    getattr(response, "status", 200), None,
+                )
+                return body
+        except urllib.error.HTTPError as exc:
+            if diagnostics is not None:
+                diagnostics.update({
+                    "status": exc.code,
+                    "bytes": 0,
+                    "content_type": exc.headers.get("Content-Type", "unknown")
+                    if exc.headers else "unknown",
+                })
+            debug_http_attempt(url, attempt, attempts, exc.code, exc)
+            if exc.code in TRANSIENT_HTTP_STATUSES and attempt < attempts:
+                time.sleep(HTTP_RETRY_DELAY)
+                continue
+            debug_http_final_failure(url, exc)
+            if exc.code in TRANSIENT_HTTP_STATUSES:
+                raise AminetDoorError(
+                    "Aminet is temporarily unavailable (HTTP %s)." % exc.code
+                )
+            raise AminetDoorError("Aminet returned HTTP %s." % exc.code)
+        except urllib.error.URLError as exc:
+            debug_network_error(url, exc)
+            raise AminetDoorError(classify_network_error(exc.reason))
+        except (socket.timeout, TimeoutError) as exc:
+            debug_network_error(url, exc)
+            raise AminetDoorError("Aminet request timed out.")
+        except ssl.SSLError as exc:
+            debug_network_error(url, exc)
+            raise AminetDoorError("TLS connection to Aminet failed.")
+        except OSError as exc:
+            debug_network_error(url, exc)
+            raise AminetDoorError(classify_network_error(exc))
+
+
+def debug_http_attempt(url, attempt, total_attempts, status, exc):
+    """Log one HTTP attempt only in developer diagnostics mode."""
+    if not DEBUG_NETWORK:
+        return
+    exception_name = type(exc).__name__ if exc is not None else "none"
+    bbs.writeln("|08GET %s" % url)
+    bbs.writeln("|08attempt %d/%d -> HTTP %s (exception %s)" % (
+        attempt, total_attempts, status, exception_name,
+    ))
+
+
+def debug_http_final_failure(url, exc):
+    """Log a final HTTP failure only in developer diagnostics mode."""
+    if DEBUG_NETWORK:
+        bbs.writeln("|08final failure: %s HTTP %s" % (type(exc).__name__, exc.code))
 
 
 def debug_network_error(url, exc):
@@ -319,7 +371,7 @@ def parse_recent_feed(raw_xml):
     try:
         root = ET.fromstring(raw_xml)
     except ET.ParseError:
-        raise AminetDoorError("Aminet returned an unreadable feed.")
+        raise AminetDoorError("Aminet returned an unreadable recent-upload feed.")
 
     items = []
     for item in root.iter("item"):
@@ -342,8 +394,32 @@ def parse_recent_feed(raw_xml):
 
 def fetch_recent():
     """Fetch and parse the Aminet recent-uploads RSS feed."""
-    raw = http_get(FEED_URL)
-    return parse_recent_feed(raw)
+    diagnostics = {}
+    try:
+        raw = http_get(FEED_URL, diagnostics=diagnostics)
+    except AminetDoorError as exc:
+        debug_recent_diagnostics(diagnostics, 0, exc)
+        raise
+    try:
+        items = parse_recent_feed(raw)
+    except AminetDoorError as exc:
+        debug_recent_diagnostics(diagnostics, 0, exc)
+        raise
+    debug_recent_diagnostics(diagnostics, len(items), None)
+    return items
+
+
+def debug_recent_diagnostics(diagnostics, item_count, error):
+    """Log Recent transport and parser results only in developer mode."""
+    if not DEBUG_NETWORK:
+        return
+    bbs.writeln("|08Recent URL: %s" % diagnostics.get("url", FEED_URL))
+    bbs.writeln("|08HTTP status: %s" % diagnostics.get("status", "unknown"))
+    bbs.writeln("|08bytes received: %s" % diagnostics.get("bytes", 0))
+    bbs.writeln("|08content type: %s" % diagnostics.get("content_type", "unknown"))
+    bbs.writeln("|08parsed item count: %d" % item_count)
+    if error is not None:
+        bbs.writeln("|08final failure: %s" % error)
 
 
 class AminetHTMLParser(HTMLParser):

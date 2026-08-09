@@ -51,6 +51,10 @@ SAMPLE_FEED = """<?xml version="1.0" encoding="UTF-8"?>
 </rss>
 """
 
+EMPTY_FEED = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>Aminet</title></channel></rss>
+"""
+
 SAMPLE_BROWSE = """
 <html><body>
 <ul>
@@ -218,12 +222,93 @@ class NetworkTests(unittest.TestCase):
         items = aminetdoor.fetch_recent()
         self.assertEqual(len(items), 2)
         request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, aminetdoor.FEED_URL)
         self.assertEqual(request.get_header("User-agent"), aminetdoor.USER_AGENT)
         self.assertIn("text/html", request.get_header("Accept"))
         self.assertEqual(request.get_header("Accept-encoding"), "identity")
         self.assertEqual(request.get_header("Connection"), "close")
         self.assertEqual(urlopen.call_args.kwargs["timeout"], aminetdoor.HTTP_TIMEOUT)
         self.assertIsInstance(urlopen.call_args.kwargs["context"], ssl.SSLContext)
+
+    @mock.patch.object(aminetdoor.time, "sleep")
+    @mock.patch.object(aminetdoor.urllib.request, "urlopen")
+    def test_transient_502_retries_then_succeeds(self, urlopen, sleep):
+        urlopen.side_effect = [
+            urllib.error.HTTPError(aminetdoor.FEED_URL, 502, "Bad Gateway", {}, None),
+            self.response(SAMPLE_FEED.encode("utf-8")),
+        ]
+        self.assertEqual(len(aminetdoor.fetch_recent()), 2)
+        self.assertEqual(urlopen.call_count, 2)
+        sleep.assert_called_once_with(aminetdoor.HTTP_RETRY_DELAY)
+
+    @mock.patch.object(aminetdoor.time, "sleep")
+    @mock.patch.object(aminetdoor.urllib.request, "urlopen")
+    def test_transient_503_and_504_retry_then_succeed(self, urlopen, sleep):
+        for status in (503, 504):
+            urlopen.reset_mock()
+            urlopen.side_effect = [
+                urllib.error.HTTPError(aminetdoor.FEED_URL, status, "Unavailable", {}, None),
+                self.response(SAMPLE_FEED.encode("utf-8")),
+            ]
+            self.assertEqual(len(aminetdoor.fetch_recent()), 2)
+            self.assertEqual(urlopen.call_count, 2)
+        self.assertEqual(sleep.call_count, 2)
+
+    @mock.patch.object(aminetdoor.time, "sleep")
+    @mock.patch.object(aminetdoor.urllib.request, "urlopen")
+    def test_transient_502_exhaustion_is_clear(self, urlopen, sleep):
+        urlopen.side_effect = [
+            urllib.error.HTTPError(aminetdoor.FEED_URL, 502, "Bad Gateway", {}, None)
+            for _ in range(3)
+        ]
+        with self.assertRaisesRegex(
+                aminetdoor.AminetDoorError,
+                r"Aminet is temporarily unavailable \(HTTP 502\)"):
+            aminetdoor.fetch_recent()
+        self.assertEqual(urlopen.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+
+    @mock.patch.object(aminetdoor.bbs, "writeln")
+    @mock.patch.object(aminetdoor.time, "sleep")
+    @mock.patch.object(aminetdoor.urllib.request, "urlopen")
+    def test_debug_retry_logs_attempts_and_final_failure(self, urlopen, sleep, writeln):
+        urlopen.side_effect = [
+            urllib.error.HTTPError(aminetdoor.TREE_URL, 502, "Bad Gateway", {}, None)
+            for _ in range(3)
+        ]
+        with mock.patch.object(aminetdoor, "DEBUG_NETWORK", True), \
+                self.assertRaises(aminetdoor.AminetDoorError):
+            aminetdoor.http_get(aminetdoor.TREE_URL)
+        output = "\n".join(call.args[0] for call in writeln.call_args_list)
+        self.assertIn("GET %s" % aminetdoor.TREE_URL, output)
+        self.assertIn("attempt 1/3 -> HTTP 502", output)
+        self.assertIn("attempt 3/3 -> HTTP 502", output)
+        self.assertIn("exception HTTPError", output)
+        self.assertIn("final failure: HTTPError HTTP 502", output)
+
+    @mock.patch.object(aminetdoor.urllib.request, "urlopen")
+    def test_recent_http_403_and_404_do_not_retry(self, urlopen):
+        for status in (403, 404):
+            urlopen.reset_mock()
+            urlopen.side_effect = urllib.error.HTTPError(
+                aminetdoor.FEED_URL, status, "Unavailable", {}, None
+            )
+            with self.assertRaisesRegex(aminetdoor.AminetDoorError, "HTTP %d" % status):
+                aminetdoor.fetch_recent()
+            self.assertEqual(urlopen.call_count, 1)
+
+    @mock.patch.object(aminetdoor.urllib.request, "urlopen")
+    def test_recent_invalid_xml_is_distinct_from_http_error(self, urlopen):
+        urlopen.return_value = self.response(b"<rss><channel>")
+        with self.assertRaisesRegex(
+                aminetdoor.AminetDoorError,
+                "Aminet returned an unreadable recent-upload feed"):
+            aminetdoor.fetch_recent()
+
+    @mock.patch.object(aminetdoor.urllib.request, "urlopen")
+    def test_recent_empty_valid_feed_is_empty(self, urlopen):
+        urlopen.return_value = self.response(EMPTY_FEED.encode("utf-8"))
+        self.assertEqual(aminetdoor.fetch_recent(), [])
 
     @mock.patch.object(aminetdoor.urllib.request, "urlopen")
     def test_http_error_is_safe_aminetdoor_error(self, urlopen):

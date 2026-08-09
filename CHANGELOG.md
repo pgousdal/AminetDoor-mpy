@@ -1,5 +1,12 @@
 # Changelog
 
+## Transient Aminet backend failures
+
+- Added bounded retries for HTTP 502, 503, and 504 responses with concise
+  final outage messages and developer-only attempt diagnostics.
+- Recent now reports feed transport and parse details in `DEBUG_NETWORK` mode;
+  malformed feeds are distinct from HTTP failures and valid empty feeds.
+
 ## M1.1 Architecture filtering
 
 - Added SysOp-configured architecture filtering for Browse package listings

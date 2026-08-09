@@ -60,8 +60,9 @@ matches Mystic.
 
 ### Aminet network diagnostics
 
-Recent, Browse, and Search share the same HTTPS transport. From the Mystic
-host, check DNS, HTTPS connectivity, firewall policy, and outbound TCP/443:
+Recent, Browse, and Search share the same HTTPS transport. Transient HTTP
+502/503/504 responses are retried twice with a short bounded delay. From the
+Mystic host, check DNS, HTTPS connectivity, firewall policy, and outbound TCP/443:
 
 ```bash
 curl -v https://aminet.net/feed
