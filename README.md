@@ -81,6 +81,9 @@ Enter      Read selected package
 Q          Return to the main menu
 ```
 
+Escape acts as Back/Quit throughout AminetDoor. It exits the main menu,
+selectors, Search input, the README reader, About, and error/pause screens.
+
 Set `RESULT_SELECTOR = "numbered"` near the top of `aminetdoor.mpy` to use
 multi-digit numbered input instead. Invalid selector values safely fall back
 to numbered mode. Lightbar Up/Down uses Mystic-native extended key handling;

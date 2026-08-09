@@ -1,5 +1,12 @@
 # Changelog
 
+## Escape navigation
+
+- Escape now acts as the global Back/Quit key across menus, selectors, Search
+  input, README pages, About, and pause/error screens.
+- Search and numbered input use a small Mystic-native `getkey()` line reader
+  so Escape, Enter, Backspace, and bounded printable input are explicit.
+
 ## Network diagnostics
 
 - Aligned the standalone urllib probe with production User-Agent, headers,

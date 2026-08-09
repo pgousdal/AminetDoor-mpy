@@ -26,6 +26,7 @@ import xml.etree.ElementTree as ET
 import mystic_bbs as bbs
 
 VERSION = "0.1.0"
+ESC = "\x1b"
 FEED_URL = "https://aminet.net/feed"
 README_URL_TEMPLATE = "https://aminet.net/%s.readme"
 TREE_URL = "https://aminet.net/tree"
@@ -496,18 +497,43 @@ def heading(title):
 
 def pause(message="Press any key"):
     bbs.write("|08%s..." % message)
-    bbs.onekey(chr(13) + "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ", False)
-
-
-def mystic_getstr(max_length, field_width=80, default=""):
-    """Read a string using Mystic's four-argument Python binding."""
-    return bbs.getstr(1, max_length, field_width, default)
+    bbs.onekey(chr(13) + ESC + "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ", False)
 
 
 def search_query_input():
-    """Read and bound one Search query from Mystic."""
-    value = terminal_text(mystic_getstr(MAX_SEARCH_QUERY)).strip()
-    return value[:MAX_SEARCH_QUERY]
+    """Read one Search query, allowing Escape to cancel immediately."""
+    value = get_text_or_cancel(MAX_SEARCH_QUERY, 60)
+    return None if value is None else terminal_text(value).strip()
+
+
+def key_value(key):
+    """Return the character portion of a Mystic key result."""
+    if isinstance(key, tuple) and key:
+        return key[0]
+    return key
+
+
+def get_text_or_cancel(max_length, field_width):
+    """Read bounded text through Mystic getkey(), returning None on Escape."""
+    chars = []
+    limit = min(max_length, field_width)
+    while True:
+        value = key_value(bbs.getkey())
+        if value in (ESC, 27):
+            return None
+        if value in ("\r", "\n", 13):
+            return "".join(chars)
+        if value in ("\b", "\x7f", 8, 127):
+            if chars:
+                chars.pop()
+                bbs.write("\b \b")
+            continue
+        if isinstance(value, int) and 32 <= value <= 126:
+            value = chr(value)
+        if isinstance(value, str) and len(value) == 1 and value.isprintable():
+            if len(chars) < limit:
+                chars.append(value)
+                bbs.write(value)
 
 
 def diagnose_key(value):
@@ -531,6 +557,8 @@ def normalize_selector_key(key):
     extended = (
         isinstance(key, tuple) and len(key) > 1 and key[1] is True
     )
+    if value in (ESC, 27):
+        return "quit"
     if extended and value == "H":
         return "up"
     if extended and value == "P":
@@ -610,15 +638,15 @@ def read_readme(package_title, path):
 
         bbs.writeln("|08" + line("-"))
         bbs.writeln(
-            "|11Page %d/%d  |15[N]|07ext  |15[P]|07rev  |15[Q]|07uit readme"
+            "|11Page %d/%d  |15[N]|07ext  |15[P]|07rev  |15[Q/Esc]|07 Back"
             % (page + 1, page_count)
         )
-        key = bbs.onekey("NPQ", False).upper()
+        key = bbs.onekey("NPQ" + ESC, False).upper()
         if key == "N" and page < page_count - 1:
             page += 1
         elif key == "P" and page > 0:
             page -= 1
-        elif key == "Q":
+        elif key in ("Q", ESC):
             return
 
 
@@ -644,7 +672,7 @@ def category_display(item):
 
 
 def render_lightbar(items, selected_index, viewport_start, title="Recent uploads",
-                    formatter=None, controls="Up/Down Move   Enter Read   Q Back"):
+                    formatter=None, controls="Up/Down Move   Enter Read   Q/Esc Back"):
     heading(title)
     formatter = formatter or (lambda item: item.get("title", ""))
     visible_end = min(viewport_start + VISIBLE_RESULT_ROWS, len(items))
@@ -662,7 +690,7 @@ def render_lightbar(items, selected_index, viewport_start, title="Recent uploads
 
 
 def choose_result_lightbar(items, title="Recent uploads", formatter=None,
-                           controls="Up/Down Move   Enter Read   Q Back",
+                           controls="Up/Down Move   Enter Read   Q/Esc Back",
                            extra_actions=()):
     """Select an item using Mystic's native extended-key input."""
     selected_index = 0
@@ -694,7 +722,7 @@ def render_numbered(items, page):
     for _ in range(VISIBLE_RESULT_ROWS - (end - start)):
         bbs.writeln("")
     bbs.writeln("|08" + line("-"))
-    bbs.write("|11Choose package |08[1-%d] |11Page %d/%d, or |15Q|11: " % (
+    bbs.write("|11Choose package |08[1-%d] |11Page %d/%d, or |15Q/Esc|11: " % (
         len(items), page + 1, page_count
     ))
 
@@ -705,7 +733,9 @@ def choose_result_numbered(items):
     page_count = max(1, (len(items) + VISIBLE_RESULT_ROWS - 1) // VISIBLE_RESULT_ROWS)
     while True:
         render_numbered(items, page)
-        value = mystic_getstr(2)
+        value = get_text_or_cancel(2, 2)
+        if value is None:
+            return None
         value = terminal_text(value).strip()
         if value.upper() == "Q":
             return None
@@ -754,7 +784,7 @@ def choose_browse_entry(items, path):
         items,
         title=title,
         formatter=formatter,
-        controls="Up/Down Move   Enter Open   B Back   R Root   Q Quit",
+        controls="Up/Down Move   Enter Open   B Back   R Root   Q/Esc Quit",
         extra_actions=("back", "root"),
     )
 
@@ -803,9 +833,11 @@ def search():
     while True:
         heading("Search Aminet")
         bbs.writeln("|07Enter a package name or keyword (max %d characters)." % MAX_SEARCH_QUERY)
-        bbs.writeln("|08Q returns to the main menu.")
+        bbs.writeln("|08Q or Esc returns to the main menu.")
         bbs.write("|11Search: |15")
         query = search_query_input()
+        if query is None:
+            return
         if not query:
             continue
         if query.upper() == "Q":
@@ -822,7 +854,7 @@ def search():
             items,
             title="Search: " + query,
             formatter=package_display,
-            controls="Up/Down Move   Enter Read   S New search   Q Back",
+            controls="Up/Down Move   Enter Read   S New search   Q/Esc Back",
             extra_actions=("search",),
         )
         if selected == "search":
@@ -861,9 +893,9 @@ def main():
         bbs.writeln("|15 [Q]|07 Return to BBS")
         bbs.writeln("")
         bbs.write("|11Select: |15")
-        key = bbs.onekey("RBSAQ", True).upper()
+        key = bbs.onekey("RBSAQ" + ESC, True).upper()
 
-        if key == "Q":
+        if key in ("Q", ESC):
             clear_screen()
             return
         if key == "A":

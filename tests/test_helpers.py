@@ -17,14 +17,6 @@ from unittest import mock
 stub = types.ModuleType("mystic_bbs")
 stub.write = lambda *args, **kwargs: None
 stub.writeln = lambda *args, **kwargs: None
-def strict_getstr(*args, **kwargs):
-    if (kwargs or len(args) != 4 or args[0] != 1 or args[2] != 80
-            or args[3] != ""):
-        raise TypeError("Mystic getstr requires (color, max_length, width, default)")
-    return ""
-
-
-stub.getstr = strict_getstr
 stub.getkey = lambda *args, **kwargs: ("Q", False)
 stub.onekey = lambda *args, **kwargs: "Q"
 sys.modules["mystic_bbs"] = stub
@@ -315,6 +307,9 @@ class SelectorTests(unittest.TestCase):
         self.assertNotEqual(aminetdoor.normalize_selector_key(("P", False)), "down")
         self.assertEqual(aminetdoor.normalize_selector_key("Q"), "quit")
         self.assertEqual(aminetdoor.normalize_selector_key("q"), "quit")
+        self.assertEqual(aminetdoor.normalize_selector_key("\x1b"), "quit")
+        self.assertEqual(aminetdoor.normalize_selector_key(27), "quit")
+        self.assertEqual(aminetdoor.normalize_selector_key(("\x1b", False)), "quit")
         self.assertEqual(aminetdoor.normalize_selector_key(("\r", False)), "enter")
         self.assertEqual(aminetdoor.normalize_selector_key(("x", False)), "unknown")
 
@@ -369,57 +364,78 @@ class SelectorTests(unittest.TestCase):
         with mock.patch.object(aminetdoor, "render_lightbar"), \
                 mock.patch.object(aminetdoor.bbs, "getkey", return_value=("Q", False)):
             self.assertIsNone(aminetdoor.choose_result_lightbar(self.items))
+        with mock.patch.object(aminetdoor, "render_lightbar"), \
+                mock.patch.object(aminetdoor.bbs, "getkey", return_value="\x1b"):
+            self.assertIsNone(aminetdoor.choose_result_lightbar(self.items))
 
     def test_numbered_selector_accepts_multi_digit_and_rejects_bad_values(self):
         with mock.patch.object(aminetdoor, "render_numbered"), \
-                mock.patch.object(aminetdoor.bbs, "getstr", side_effect=["0", "21", "abc", "", "10"]):
+                mock.patch.object(aminetdoor.bbs, "getkey", side_effect=list("0\r21\rabc\r\r10\r")):
             self.assertIs(aminetdoor.choose_result_numbered(self.items), self.items[9])
         with mock.patch.object(aminetdoor, "render_numbered"), \
-                mock.patch.object(aminetdoor.bbs, "getstr", return_value="1"):
+                mock.patch.object(aminetdoor.bbs, "getkey", side_effect=list("1\r")):
             self.assertIs(aminetdoor.choose_result_numbered(self.items), self.items[0])
         with mock.patch.object(aminetdoor, "render_numbered"), \
-                mock.patch.object(aminetdoor.bbs, "getstr", return_value="9"):
+                mock.patch.object(aminetdoor.bbs, "getkey", side_effect=list("9\r")):
             self.assertIs(aminetdoor.choose_result_numbered(self.items), self.items[8])
         with mock.patch.object(aminetdoor, "render_numbered"), \
-                mock.patch.object(aminetdoor.bbs, "getstr", return_value="20"):
+                mock.patch.object(aminetdoor.bbs, "getkey", side_effect=list("20\r")):
             self.assertIs(aminetdoor.choose_result_numbered(self.items), self.items[19])
         for value in ("Q", "q"):
             with mock.patch.object(aminetdoor, "render_numbered"), \
-                    mock.patch.object(aminetdoor.bbs, "getstr", return_value=value):
+                    mock.patch.object(aminetdoor.bbs, "getkey", side_effect=[value, "\r"]):
                 self.assertIsNone(aminetdoor.choose_result_numbered(self.items))
 
 
 class MysticInputTests(unittest.TestCase):
-    def test_mystic_getstr_uses_four_argument_signature(self):
-        with mock.patch.object(aminetdoor.bbs, "getstr", return_value="doom") as getstr:
-            self.assertEqual(aminetdoor.mystic_getstr(60), "doom")
-            getstr.assert_called_once_with(1, 60, 80, "")
-
     def test_search_input_handles_text_empty_q_and_bounds(self):
-        with mock.patch.object(aminetdoor.bbs, "getstr", return_value="doom") as getstr:
+        with mock.patch.object(aminetdoor.bbs, "getkey", side_effect=list("doom") + ["\r"]):
             self.assertEqual(aminetdoor.search_query_input(), "doom")
-            getstr.assert_called_once_with(1, aminetdoor.MAX_SEARCH_QUERY, 80, "")
-        with mock.patch.object(aminetdoor.bbs, "getstr", return_value=""):
+        with mock.patch.object(aminetdoor.bbs, "getkey", return_value="\r"):
             self.assertEqual(aminetdoor.search_query_input(), "")
-        with mock.patch.object(aminetdoor.bbs, "getstr", return_value="Q"):
+        with mock.patch.object(aminetdoor.bbs, "getkey", return_value="\x1b"):
+            self.assertIsNone(aminetdoor.search_query_input())
+        with mock.patch.object(aminetdoor.bbs, "getkey", side_effect=["Q", "\r"]):
             self.assertEqual(aminetdoor.search_query_input(), "Q")
-        with mock.patch.object(aminetdoor.bbs, "getstr", return_value="x" * 100):
+        with mock.patch.object(aminetdoor.bbs, "getkey", side_effect=list("x" * 100) + ["\r"]):
             self.assertEqual(len(aminetdoor.search_query_input()), aminetdoor.MAX_SEARCH_QUERY)
+        with mock.patch.object(aminetdoor.bbs, "getkey",
+                              side_effect=["a", "b", "\b", "c", "\r"]):
+            self.assertEqual(aminetdoor.search_query_input(), "ac")
 
     def test_search_q_exits_after_compatible_input(self):
-        with mock.patch.object(aminetdoor.bbs, "getstr", return_value="q") as getstr:
+        with mock.patch.object(aminetdoor.bbs, "getkey", side_effect=["q", "\r"]):
             aminetdoor.search()
-            getstr.assert_called_once_with(1, aminetdoor.MAX_SEARCH_QUERY, 80, "")
 
     def test_numbered_selector_uses_compatible_input(self):
         with mock.patch.object(aminetdoor, "render_numbered"), \
-                mock.patch.object(aminetdoor.bbs, "getstr", return_value="10") as getstr:
+                mock.patch.object(aminetdoor.bbs, "getkey", side_effect=list("10") + ["\r"]):
             selected = aminetdoor.choose_result_numbered([
                 {"title": "Package %d" % i, "path": "pkg/%d" % i}
                 for i in range(1, 11)
             ])
             self.assertEqual(selected["title"], "Package 10")
-            getstr.assert_called_once_with(1, 2, 80, "")
+
+    def test_escape_exits_browse_and_search_result_selectors(self):
+        items = [{"title": "Package", "path": "pkg/name"}]
+        with mock.patch.object(aminetdoor, "render_lightbar"), \
+                mock.patch.object(aminetdoor.bbs, "getkey", return_value=("\x1b", False)):
+            self.assertIsNone(aminetdoor.choose_browse_entry(items, "game"))
+        with mock.patch.object(aminetdoor, "render_lightbar"), \
+                mock.patch.object(aminetdoor.bbs, "getkey", return_value=27):
+            self.assertIsNone(aminetdoor.choose_result_lightbar(items, title="Search: doom"))
+
+    def test_escape_exits_main_menu_and_readme(self):
+        with mock.patch.object(aminetdoor.bbs, "onekey", return_value=aminetdoor.ESC):
+            aminetdoor.main()
+        with mock.patch.object(aminetdoor, "fetch_readme", return_value="README"), \
+                mock.patch.object(aminetdoor.bbs, "onekey", return_value=aminetdoor.ESC):
+            aminetdoor.read_readme("Package", "pkg/name")
+
+    def test_pause_accepts_escape(self):
+        with mock.patch.object(aminetdoor.bbs, "onekey", return_value=aminetdoor.ESC) as onekey:
+            aminetdoor.pause()
+            self.assertIn(aminetdoor.ESC, onekey.call_args.args[0])
 
 
 if __name__ == "__main__":
