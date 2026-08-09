@@ -15,7 +15,14 @@ from unittest import mock
 stub = types.ModuleType("mystic_bbs")
 stub.write = lambda *args, **kwargs: None
 stub.writeln = lambda *args, **kwargs: None
-stub.getstr = lambda *args, **kwargs: ""
+def strict_getstr(*args, **kwargs):
+    if (kwargs or len(args) != 4 or args[0] != 1 or args[2] != 80
+            or args[3] != ""):
+        raise TypeError("Mystic getstr requires (color, max_length, width, default)")
+    return ""
+
+
+stub.getstr = strict_getstr
 stub.getkey = lambda *args, **kwargs: ("Q", False)
 stub.onekey = lambda *args, **kwargs: "Q"
 sys.modules["mystic_bbs"] = stub
@@ -339,6 +346,39 @@ class SelectorTests(unittest.TestCase):
             with mock.patch.object(aminetdoor, "render_numbered"), \
                     mock.patch.object(aminetdoor.bbs, "getstr", return_value=value):
                 self.assertIsNone(aminetdoor.choose_result_numbered(self.items))
+
+
+class MysticInputTests(unittest.TestCase):
+    def test_mystic_getstr_uses_four_argument_signature(self):
+        with mock.patch.object(aminetdoor.bbs, "getstr", return_value="doom") as getstr:
+            self.assertEqual(aminetdoor.mystic_getstr(60), "doom")
+            getstr.assert_called_once_with(1, 60, 80, "")
+
+    def test_search_input_handles_text_empty_q_and_bounds(self):
+        with mock.patch.object(aminetdoor.bbs, "getstr", return_value="doom") as getstr:
+            self.assertEqual(aminetdoor.search_query_input(), "doom")
+            getstr.assert_called_once_with(1, aminetdoor.MAX_SEARCH_QUERY, 80, "")
+        with mock.patch.object(aminetdoor.bbs, "getstr", return_value=""):
+            self.assertEqual(aminetdoor.search_query_input(), "")
+        with mock.patch.object(aminetdoor.bbs, "getstr", return_value="Q"):
+            self.assertEqual(aminetdoor.search_query_input(), "Q")
+        with mock.patch.object(aminetdoor.bbs, "getstr", return_value="x" * 100):
+            self.assertEqual(len(aminetdoor.search_query_input()), aminetdoor.MAX_SEARCH_QUERY)
+
+    def test_search_q_exits_after_compatible_input(self):
+        with mock.patch.object(aminetdoor.bbs, "getstr", return_value="q") as getstr:
+            aminetdoor.search()
+            getstr.assert_called_once_with(1, aminetdoor.MAX_SEARCH_QUERY, 80, "")
+
+    def test_numbered_selector_uses_compatible_input(self):
+        with mock.patch.object(aminetdoor, "render_numbered"), \
+                mock.patch.object(aminetdoor.bbs, "getstr", return_value="10") as getstr:
+            selected = aminetdoor.choose_result_numbered([
+                {"title": "Package %d" % i, "path": "pkg/%d" % i}
+                for i in range(1, 11)
+            ])
+            self.assertEqual(selected["title"], "Package 10")
+            getstr.assert_called_once_with(1, 2, 80, "")
 
 
 if __name__ == "__main__":

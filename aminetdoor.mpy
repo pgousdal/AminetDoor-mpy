@@ -403,6 +403,17 @@ def pause(message="Press any key"):
     bbs.onekey(chr(13) + "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ", False)
 
 
+def mystic_getstr(max_length, field_width=80, default=""):
+    """Read a string using Mystic's four-argument Python binding."""
+    return bbs.getstr(1, max_length, field_width, default)
+
+
+def search_query_input():
+    """Read and bound one Search query from Mystic."""
+    value = terminal_text(mystic_getstr(MAX_SEARCH_QUERY)).strip()
+    return value[:MAX_SEARCH_QUERY]
+
+
 def diagnose_key(value):
     """Optionally show the raw value returned by Mystic while debugging keys."""
     if not DEBUG_KEYS:
@@ -598,7 +609,7 @@ def choose_result_numbered(items):
     page_count = max(1, (len(items) + VISIBLE_RESULT_ROWS - 1) // VISIBLE_RESULT_ROWS)
     while True:
         render_numbered(items, page)
-        value = bbs.getstr("", 2)
+        value = mystic_getstr(2)
         value = terminal_text(value).strip()
         if value.upper() == "Q":
             return None
@@ -698,7 +709,7 @@ def search():
         bbs.writeln("|07Enter a package name or keyword (max %d characters)." % MAX_SEARCH_QUERY)
         bbs.writeln("|08Q returns to the main menu.")
         bbs.write("|11Search: |15")
-        query = terminal_text(bbs.getstr("", MAX_SEARCH_QUERY)).strip()
+        query = search_query_input()
         if not query:
             continue
         if query.upper() == "Q":
