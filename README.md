@@ -53,8 +53,8 @@ See `docs/INSTALL.md` for more detail.
 
 ## Controls
 
-Navigation follows a consistent Mystic door convention: arrow keys move, Enter
-selects, and Q/Esc returns or exits.
+AminetDoor follows Mystic-native navigation conventions: arrow keys move, Enter
+opens, and ESC returns or exits. Q is retained as an ESC-compatible alias.
 
 Main menu:
 
@@ -81,10 +81,10 @@ Recent uploads (default lightbar selector):
 ```text
 Up / Down  Move selection
 Enter      Read selected package
-Q / Esc    Return to the main menu
+ESC / Q    Return to the main menu
 ```
 
-Escape acts as Back/Quit throughout AminetDoor. It exits the main menu,
+ESC acts as Back/Cancel throughout AminetDoor. It exits the main menu,
 selectors, Search input, the README reader, About, and error/pause screens.
 
 Set `RESULT_SELECTOR = "numbered"` near the top of `aminetdoor.mpy` to use
@@ -97,7 +97,7 @@ README reader:
 ```text
 N  Next page
 P  Previous page
-Q / Esc  Return to the package list
+ESC / Q  Return to the package list
 ```
 
 ## Aminet endpoints

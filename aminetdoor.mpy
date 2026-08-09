@@ -654,7 +654,7 @@ def read_readme(package_title, path):
 
         bbs.writeln("|08" + line("-"))
         bbs.writeln(
-            "|11Page %d/%d  |15[N]|07ext  |15[P]|07rev  |15[Q/Esc]|07 Back"
+            "|11Page %d/%d  |15[N]|07ext  |15[P]|07rev  |15[ESC/Q]|07 Back"
             % (page + 1, page_count)
         )
         action = normalize_key(bbs.onekey("NPQ" + ESC, False))
@@ -688,7 +688,7 @@ def category_display(item):
 
 
 def render_lightbar(items, selected_index, viewport_start, title="Recent uploads",
-                    formatter=None, controls="Up/Down Move   Enter Read   Q/Esc Back"):
+                    formatter=None, controls="Up/Down Move   Enter Read   ESC/Q Back"):
     heading(title)
     formatter = formatter or (lambda item: item.get("title", ""))
     visible_end = min(viewport_start + VISIBLE_RESULT_ROWS, len(items))
@@ -706,7 +706,7 @@ def render_lightbar(items, selected_index, viewport_start, title="Recent uploads
 
 
 def choose_result_lightbar(items, title="Recent uploads", formatter=None,
-                           controls="Up/Down Move   Enter Read   Q/Esc Back",
+                           controls="Up/Down Move   Enter Read   ESC/Q Back",
                            extra_actions=()):
     """Select an item using Mystic's native extended-key input."""
     selected_index = 0
@@ -738,7 +738,7 @@ def render_numbered(items, page):
     for _ in range(VISIBLE_RESULT_ROWS - (end - start)):
         bbs.writeln("")
     bbs.writeln("|08" + line("-"))
-    bbs.write("|11Choose package |08[1-%d] |11Page %d/%d, or |15Q/Esc|11: " % (
+    bbs.write("|11Choose package |08[1-%d] |11Page %d/%d, or |15ESC/Q|11: " % (
         len(items), page + 1, page_count
     ))
 
@@ -801,7 +801,7 @@ def choose_browse_entry(items, path):
         items,
         title=title,
         formatter=formatter,
-        controls="Up/Down Move   Enter Open   B Back   R Root   Q/Esc Exit",
+        controls="Up/Down Move   Enter Open   B Back   R Root   ESC/Q Exit",
         extra_actions=("back", "root"),
     )
 
@@ -850,7 +850,7 @@ def search():
     while True:
         heading("Search Aminet")
         bbs.writeln("|07Enter a package name or keyword (max %d characters)." % MAX_SEARCH_QUERY)
-        bbs.writeln("|08Q or Esc returns to the main menu.")
+        bbs.writeln("|08ESCAPE returns to the main menu; Q also works.")
         bbs.write("|11Search: |15")
         query = search_query_input()
         if query is None:
@@ -871,7 +871,7 @@ def search():
             items,
             title="Search: " + query,
             formatter=package_display,
-            controls="Up/Down Move   Enter Read   S New search   Q/Esc Back",
+            controls="Up/Down Move   Enter Read   S Search   ESC/Q Back",
             extra_actions=("search",),
         )
         if selected == "search":
@@ -909,6 +909,7 @@ def main():
         bbs.writeln("|15 [A]|07 About")
         bbs.writeln("|15 [Q]|07 Return to BBS")
         bbs.writeln("")
+        bbs.writeln("|08ESCAPE returns to BBS")
         bbs.write("|11Select: |15")
         action = normalize_menu_key(bbs.onekey("RBSAQ" + ESC, True))
 

@@ -21,18 +21,27 @@ AminetDoor is a small Mystic BBS Python 3 door for browsing Aminet.
 
 ## Mystic Door Navigation Standard
 
-- Up/Down: move selection
-- Enter: activate/open
-- Esc: back / cancel / exit the current screen
-- Q: same semantic action as Esc
-- B: one hierarchical level back, where applicable
-- R: return to root, where applicable
-- S: search/new search, where applicable
+- ESC     Back / Cancel / Menu / Exit the current context
+- Q       Alias for ESC where appropriate
 
-Esc must never leave the caller trapped in an input prompt, pager, selector,
-About screen, error screen, pause screen, or other interactive state.
+- Up/Down Move selection
+- Enter   Select / Open
 
-Where both Q and Esc are available, they must perform the same semantic action
+- B       Back one hierarchy level, where applicable
+- R       Return to root, where applicable
+- S       Search / New search, where applicable
+
+ESC is the primary navigation convention.
+
+AminetDoor should behave like a native Mystic interface wherever practical.
+
+Q is retained as a convenient BBS-door compatibility alias where ESC performs
+Back/Cancel/Exit.
+
+A caller must never become trapped in a selector, text-input field, pager,
+About screen, error screen, or other interactive state because ESC is ignored.
+
+Where both Q and ESC are available, they must perform the same semantic action
 unless a screen has a clearly documented exceptional reason.
 
 Mystic `getkey()` returns Escape as `"\\x1b"` (or integer 27 in compatible

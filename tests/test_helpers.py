@@ -381,6 +381,10 @@ class SelectorTests(unittest.TestCase):
                 mock.patch.object(aminetdoor.bbs, "getkey", return_value=aminetdoor.ESC):
             self.assertIsNone(aminetdoor.choose_result_lightbar(
                 self.items, title="Search: doom", extra_actions=("search",)))
+        with mock.patch.object(aminetdoor, "render_lightbar"), \
+                mock.patch.object(aminetdoor.bbs, "getkey", return_value=("Q", False)):
+            self.assertIsNone(aminetdoor.choose_result_lightbar(
+                self.items, title="Search: doom", extra_actions=("search",)))
 
     def test_readme_navigation_actions(self):
         self.assertEqual(aminetdoor.normalize_key("N"), "next")
@@ -440,12 +444,12 @@ class MysticInputTests(unittest.TestCase):
 
     def test_escape_exits_browse_and_search_result_selectors(self):
         items = [{"title": "Package", "path": "pkg/name"}]
-        with mock.patch.object(aminetdoor, "render_lightbar"), \
-                mock.patch.object(aminetdoor.bbs, "getkey", return_value=("\x1b", False)):
-            self.assertIsNone(aminetdoor.choose_browse_entry(items, "game"))
-        with mock.patch.object(aminetdoor, "render_lightbar"), \
-                mock.patch.object(aminetdoor.bbs, "getkey", return_value=27):
-            self.assertIsNone(aminetdoor.choose_result_lightbar(items, title="Search: doom"))
+        for key in (aminetdoor.ESC, ("Q", False)):
+            with mock.patch.object(aminetdoor, "render_lightbar"), \
+                    mock.patch.object(aminetdoor.bbs, "getkey", return_value=key):
+                self.assertIsNone(aminetdoor.choose_browse_entry(items, "game"))
+                self.assertIsNone(aminetdoor.choose_result_lightbar(
+                    items, title="Search: doom"))
 
     def test_escape_exits_main_menu_and_readme(self):
         for key in ("Q", aminetdoor.ESC):
@@ -460,6 +464,9 @@ class MysticInputTests(unittest.TestCase):
                                return_value="\n".join("line %d" % i for i in range(20))), \
                 mock.patch.object(aminetdoor.bbs, "onekey",
                                   side_effect=["N", "P", aminetdoor.ESC]):
+            aminetdoor.read_readme("Package", "pkg/name")
+        with mock.patch.object(aminetdoor, "fetch_readme", return_value="README"), \
+                mock.patch.object(aminetdoor.bbs, "onekey", return_value="Q"):
             aminetdoor.read_readme("Package", "pkg/name")
 
     def test_pause_accepts_escape(self):

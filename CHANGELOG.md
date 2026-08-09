@@ -1,9 +1,10 @@
 # Changelog
 
-## Escape navigation
+## Mystic-native ESC navigation
 
-- Escape now acts as the global Back/Quit key across menus, selectors, Search
+- ESC is now presented as the primary Back/Cancel/Menu key across menus, selectors, Search
   input, README pages, About, and pause/error screens.
+- Q remains the compatible alias wherever ESC performs the same action.
 - Search and numbered input use a small Mystic-native `getkey()` line reader
   so Escape, Enter, Backspace, and bounded printable input are explicit.
 - Centralized navigation preserves Mystic's live-tested Escape (`"\\x1b"`) and
