@@ -6,6 +6,11 @@
 - Quick Path reuses Browse retrieval, architecture filtering, and existing
   hierarchy semantics.
 
+## M1.4 Resilient Browse
+
+- Browse root and catalog parents no longer depend on Aminet's `/tree` endpoint.
+- Catalog leaves continue to load live, architecture-filtered package listings.
+
 ## M1.2 Local README cache
 
 - Added a bounded JSON cache for package README text with a 24-hour default TTL.

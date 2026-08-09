@@ -71,6 +71,36 @@ SEARCH_RESULT_LIMIT = 20
 MAX_SEARCH_QUERY = 60
 MAX_QUICK_PATH = 60
 BROWSE_PATH_RE = re.compile(r"^[A-Za-z0-9_+-]+(?:/[A-Za-z0-9_+-]+)*$")
+# Mirrors Aminet's public Browse tree. This is category navigation data only;
+# package listings and metadata remain live. Verify deliberately when Aminet's
+# category structure changes.
+AMINET_CATEGORY_TREE = {
+    "": "biz comm demo dev disk docs driver game gfx info mags misc mods mus pix text util".split(),
+    "biz": "dbase misc spread".split(),
+    "comm": "ambos amiex bbs cnet dlg fido irc mail maxs mebbs misc mmgr net news tcp term thor ums uucp www xeno yam".split(),
+    "demo": "40k aga bse disk ecs euro file funet intro mag mega misc slide sound sp96 ta95 ta96 ta97 tg93 tg95 tg96 tg97 tp92 tp94 tp95 tp96 track".split(),
+    "dev": "amos asm basic blitz c cross debug e gcc gg gui hwood lang lib m2 misc moni mui ober o src".split(),
+    "disk": "bakup cache cdrom misc moni optim salv".split(),
+    "docs": "anno hard help hyper lists misc rview".split(),
+    "driver": "audio input media moni net other print video".split(),
+    "game": "2play actio board data demo edit gag hint jump misc patch race role shoot strat text think wb".split(),
+    "gfx": "3d arteff conv edit fract ifx misc pbm ppaint show".split(),
+    "info": "adt".split(),
+    "mags": "1000er 5minute aaktint aguiden aio aktuell arec areport aupdate crypt german ham hpool misc noamiga nocover obligem saku".split(),
+    "misc": "amag antiq edu emu fish imdb kids math misc os sci unix x11".split(),
+    "mods": "32bit 4mat 8voic airon alpma anakir atmos aweso bhead bladr blasa blk blkha boing boray casef cato cels chart chip chrom chryl clawz cloud crash crn csm ctp cust cutc darde dean delor demo dizzy dlusn doh dremr dsx elbie emax ephnx essen evrim exprt facet fby fermx fox2 funet funk hardc hje house huezo hw ijont inst instr jazzc jogei jorma jungl k4k kaa kicko lead mark maxym med melod melom midi misc mnc moods mpg mryo mvp ncase neuro nkn nork ooze otis panik pdy pete piano pop pro przk punn purg racoo rated rock roz s3m sbc sets sidew slc slow smg smpl sonor spark stame stun symph synth techn toady tp96 tranc uns uprgh vdo voice voy wmr xceed xm".split(),
+    "mus": "edit midi misc play".split(),
+    "pix": "3dani 3dobj addic anim art astro back bill boot clip eps eric fauna fract gicon glenn guard heiko henz icon illu imagi irc jake jason map mark misc mpg mwb nevil nicon park picon real3 sport textu theme tp96 trace unrl vehic views wb".split(),
+    "text": "bfont dtp edit font fwrit hyper ifont misc pfont print show tex tfont".split(),
+    "util": "app arc batch blank boot cdity cli conv crypt dir dopus dtype libs misc moni mouse pack rexx shell sys time virus wb".split(),
+}
+AMINET_CATEGORY_PATHS = {""}
+for _parent, _children in AMINET_CATEGORY_TREE.items():
+    AMINET_CATEGORY_PATHS.update(
+        child if not _parent else _parent + "/" + child
+        for child in _children
+    )
+del _parent, _children
 MAX_RESPONSE_BYTES = 250000
 CA_BUNDLE_CANDIDATES = (
     "/etc/ssl/certs/ca-certificates.crt",
@@ -606,28 +636,49 @@ def child_categories(categories, parent_path):
     return result
 
 
+def catalog_categories(path):
+    """Return local category entries immediately below a catalog path."""
+    if path not in AMINET_CATEGORY_PATHS:
+        return []
+    entries = []
+    for child in AMINET_CATEGORY_TREE.get(path, ()):
+        child_path = child if not path else path + "/" + child
+        entries.append({
+            "kind": "category",
+            "title": child_path,
+            "path": child_path,
+            "description": "",
+            "link": "",
+        })
+    return entries
+
+
+def fetch_browse_packages(path):
+    """Fetch one live package listing without consulting Aminet's tree."""
+    architectures = normalize_architecture_filter(ARCHITECTURE_FILTER)
+    if architectures is None:
+        url = CATEGORY_URL_TEMPLATE % urllib.parse.quote(path, safe="/")
+    else:
+        url = build_advanced_search_url(path=path, architectures=architectures)
+    raw = http_get(url)
+    _, packages = parse_aminet_html(raw)
+    packages = merge_packages([packages])
+    if DEBUG_NETWORK:
+        bbs.writeln("|08Browse package URL: %s" % url)
+        bbs.writeln("|08Parsed packages: %d" % len(packages))
+    return packages
+
+
 def fetch_browse(path=""):
-    """Fetch one level of Aminet's tree, or packages at a leaf path."""
+    """Fetch local categories or live packages for one Browse path."""
     path = normalize_browse_path(path)
     if path is None:
         raise AminetDoorError("Aminet returned an unsafe browse path.")
-    query = urllib.parse.urlencode({"path": path}) if path else ""
-    raw = http_get(TREE_URL + ("?" + query if query else ""))
-    categories, packages = parse_aminet_html(raw)
-    categories = child_categories(categories, path)
-    if path and not categories:
-        architectures = normalize_architecture_filter(ARCHITECTURE_FILTER)
-        if architectures is None:
-            url = CATEGORY_URL_TEMPLATE % urllib.parse.quote(path, safe="/")
-        else:
-            url = build_advanced_search_url(path=path, architectures=architectures)
-        raw = http_get(url)
-        _, packages = parse_aminet_html(raw)
-        packages = merge_packages([packages])
-    if DEBUG_NETWORK:
-        bbs.writeln("|08Browse URL: %s" % (TREE_URL + ("?" + query if query else "")))
+    categories = catalog_categories(path)
+    packages = [] if categories else fetch_browse_packages(path)
+    if DEBUG_NETWORK and categories:
+        bbs.writeln("|08Browse catalog path: %s" % (path or "root"))
         bbs.writeln("|08Parsed categories: %d" % len(categories))
-        bbs.writeln("|08Parsed packages: %d" % len(packages))
     return categories, packages
 
 
@@ -1158,12 +1209,17 @@ def browse_path_after_action(path, action, selected=None):
 def browse():
     """Browse Aminet's category tree and package listings."""
     path = ""
+    pending_entries = None
     while True:
-        try:
-            categories, packages = fetch_browse(path)
-        except AminetDoorError as exc:
-            show_error(str(exc))
-            return
+        if pending_entries is None:
+            try:
+                categories, packages = fetch_browse(path)
+            except AminetDoorError as exc:
+                show_error(str(exc))
+                return
+        else:
+            categories, packages = pending_entries
+            pending_entries = None
         entries = categories or packages
         if not entries:
             show_error("No browse entries were returned.")
@@ -1186,6 +1242,7 @@ def browse():
                 show_error("No Aminet category found for that path.")
                 continue
             path = target_path
+            pending_entries = (target_categories, target_packages)
         elif selected is None:
             return
         elif selected.get("kind") == "category":

@@ -383,26 +383,39 @@ class NetworkTests(unittest.TestCase):
             aminetdoor.fetch_readme("comm/net/amiagent-0.5.3")
 
     @mock.patch.object(aminetdoor.urllib.request, "urlopen")
-    def test_fetch_browse_uses_tree_then_leaf_endpoint(self, urlopen):
-        tree_response = self.response(SAMPLE_BROWSE.encode("latin-1"))
-        leaf_response = self.response(SAMPLE_SEARCH.encode("latin-1"))
-        urlopen.side_effect = [tree_response, leaf_response]
+    def test_fetch_browse_uses_live_leaf_package_endpoint(self, urlopen):
+        urlopen.return_value = self.response(SAMPLE_SEARCH.encode("latin-1"))
         categories, packages = aminetdoor.fetch_browse("game/shoot")
         self.assertEqual(categories, [])
         self.assertEqual(len(packages), 2)
-        self.assertIn("/tree?path=game%2Fshoot", urlopen.call_args_list[0].args[0].full_url)
-        self.assertEqual(urlopen.call_args_list[1].args[0].full_url,
+        self.assertEqual(urlopen.call_args.args[0].full_url,
                          "https://aminet.net/search?type=advanced&path%5B%5D=game%2Fshoot&q_arch=AND&arch%5B%5D=m68k-amigaos&arch%5B%5D=generic")
 
     @mock.patch.object(aminetdoor.urllib.request, "urlopen")
-    def test_browse_tree_stays_complete_with_architecture_filter(self, urlopen):
-        urlopen.return_value = self.response(SAMPLE_BROWSE.encode("latin-1"))
+    def test_browse_catalog_stays_complete_without_tree_request(self, urlopen):
+        urlopen.side_effect = urllib.error.HTTPError(
+            aminetdoor.TREE_URL, 502, "Bad Gateway", {}, None
+        )
         categories, packages = aminetdoor.fetch_browse()
-        self.assertEqual(len(packages), 1)
-        self.assertIn("game", [item["path"] for item in categories])
-        self.assertEqual(urlopen.call_count, 1)
-        self.assertEqual(urlopen.call_args.args[0].full_url,
-                         "https://aminet.net/tree")
+        self.assertEqual(packages, [])
+        self.assertEqual(len(categories), 17)
+        self.assertEqual(
+            {item["path"] for item in categories},
+            {"biz", "comm", "demo", "dev", "disk", "docs", "driver",
+             "game", "gfx", "info", "mags", "misc", "mods", "mus", "pix",
+             "text", "util"},
+        )
+        urlopen.assert_not_called()
+
+    @mock.patch.object(aminetdoor.urllib.request, "urlopen")
+    def test_browse_parent_uses_catalog_without_tree_request(self, urlopen):
+        urlopen.side_effect = urllib.error.HTTPError(
+            aminetdoor.TREE_URL, 502, "Bad Gateway", {}, None
+        )
+        categories, packages = aminetdoor.fetch_browse("game")
+        self.assertEqual(packages, [])
+        self.assertIn("game/shoot", [item["path"] for item in categories])
+        urlopen.assert_not_called()
 
     @mock.patch.object(aminetdoor.urllib.request, "urlopen")
     def test_fetch_search_is_bounded_and_parsed(self, urlopen):
@@ -423,13 +436,10 @@ class NetworkTests(unittest.TestCase):
 
     @mock.patch.object(aminetdoor.urllib.request, "urlopen")
     def test_unfiltered_browse_preserves_category_request(self, urlopen):
-        urlopen.side_effect = [
-            self.response(SAMPLE_BROWSE.encode("latin-1")),
-            self.response(SAMPLE_SEARCH.encode("latin-1")),
-        ]
+        urlopen.return_value = self.response(SAMPLE_SEARCH.encode("latin-1"))
         with mock.patch.object(aminetdoor, "ARCHITECTURE_FILTER", None):
             aminetdoor.fetch_browse("game/shoot")
-        self.assertEqual(urlopen.call_args_list[1].args[0].full_url,
+        self.assertEqual(urlopen.call_args.args[0].full_url,
                          "https://aminet.net/game/shoot")
 
 
@@ -721,7 +731,8 @@ class SelectorTests(unittest.TestCase):
                                                ([], [package]), ([category], [])]) as fetch:
             aminetdoor.browse()
         self.assertEqual([item.args[0] for item in fetch.call_args_list],
-                         ["", "game/shoot", "game/shoot", "game"])
+                         ["", "game/shoot", "game"])
+        self.assertEqual(aminetdoor.browse_path_after_action("game/shoot", "root"), "")
 
     def test_failed_quick_path_keeps_current_browse_state(self):
         category = {"kind": "category", "path": "game"}
