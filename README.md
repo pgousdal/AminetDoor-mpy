@@ -53,12 +53,15 @@ See `docs/INSTALL.md` for more detail.
 
 ## Controls
 
+Navigation follows a consistent Mystic door convention: arrow keys move, Enter
+selects, and Q/Esc returns or exits.
+
 Main menu:
 
 ```text
 R  Recent uploads
 A  About
-Q  Quit
+Q  Return to BBS
 ```
 
 Main menu also provides:
@@ -78,7 +81,7 @@ Recent uploads (default lightbar selector):
 ```text
 Up / Down  Move selection
 Enter      Read selected package
-Q          Return to the main menu
+Q / Esc    Return to the main menu
 ```
 
 Escape acts as Back/Quit throughout AminetDoor. It exits the main menu,
@@ -94,7 +97,7 @@ README reader:
 ```text
 N  Next page
 P  Previous page
-Q  Return to recent-uploads list
+Q / Esc  Return to the package list
 ```
 
 ## Aminet endpoints

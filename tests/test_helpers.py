@@ -301,17 +301,19 @@ class SelectorTests(unittest.TestCase):
 
     def test_mystic_extended_keys_are_normalized(self):
         # These arrow tuples were confirmed on a live Mystic BBS installation.
-        self.assertEqual(aminetdoor.normalize_selector_key(("H", True)), "up")
-        self.assertEqual(aminetdoor.normalize_selector_key(("P", True)), "down")
-        self.assertNotEqual(aminetdoor.normalize_selector_key(("H", False)), "up")
-        self.assertNotEqual(aminetdoor.normalize_selector_key(("P", False)), "down")
-        self.assertEqual(aminetdoor.normalize_selector_key("Q"), "quit")
-        self.assertEqual(aminetdoor.normalize_selector_key("q"), "quit")
-        self.assertEqual(aminetdoor.normalize_selector_key("\x1b"), "quit")
-        self.assertEqual(aminetdoor.normalize_selector_key(27), "quit")
-        self.assertEqual(aminetdoor.normalize_selector_key(("\x1b", False)), "quit")
-        self.assertEqual(aminetdoor.normalize_selector_key(("\r", False)), "enter")
-        self.assertEqual(aminetdoor.normalize_selector_key(("x", False)), "unknown")
+        self.assertEqual(aminetdoor.normalize_key(("H", True)), "up")
+        self.assertEqual(aminetdoor.normalize_key(("P", True)), "down")
+        self.assertNotEqual(aminetdoor.normalize_key(("H", False)), "up")
+        self.assertNotEqual(aminetdoor.normalize_key(("P", False)), "down")
+        self.assertEqual(aminetdoor.normalize_key("Q"), "quit")
+        self.assertEqual(aminetdoor.normalize_key("q"), "quit")
+        self.assertEqual(aminetdoor.normalize_key("\x1b"), "quit")
+        self.assertEqual(aminetdoor.normalize_key(27), "quit")
+        self.assertEqual(aminetdoor.normalize_key(("\x1b", False)), "quit")
+        self.assertEqual(aminetdoor.normalize_key(("\r", False)), "enter")
+        self.assertEqual(aminetdoor.normalize_key(("x", False)), "unknown")
+        self.assertEqual(aminetdoor.normalize_key("N"), "next")
+        self.assertEqual(aminetdoor.normalize_key("P"), "previous")
 
     def test_selector_mode_dispatch_and_invalid_fallback(self):
         with mock.patch.object(aminetdoor, "RESULT_SELECTOR", "lightbar"), \
@@ -356,6 +358,8 @@ class SelectorTests(unittest.TestCase):
         self.assertEqual(aminetdoor.browse_path_after_action("game/shoot", "back"), "game")
         self.assertEqual(aminetdoor.browse_path_after_action("game", "root"), "")
         self.assertIsNone(aminetdoor.browse_path_after_action("", "back"))
+        self.assertNotEqual(aminetdoor.normalize_key("B"),
+                            aminetdoor.normalize_key(aminetdoor.ESC))
 
     def test_lightbar_enter_and_quit(self):
         with mock.patch.object(aminetdoor, "render_lightbar"), \
@@ -365,8 +369,23 @@ class SelectorTests(unittest.TestCase):
                 mock.patch.object(aminetdoor.bbs, "getkey", return_value=("Q", False)):
             self.assertIsNone(aminetdoor.choose_result_lightbar(self.items))
         with mock.patch.object(aminetdoor, "render_lightbar"), \
-                mock.patch.object(aminetdoor.bbs, "getkey", return_value="\x1b"):
+                mock.patch.object(aminetdoor.bbs, "getkey", return_value=aminetdoor.ESC):
             self.assertIsNone(aminetdoor.choose_result_lightbar(self.items))
+
+    def test_search_result_selector_supports_new_search_and_escape(self):
+        with mock.patch.object(aminetdoor, "render_lightbar"), \
+                mock.patch.object(aminetdoor.bbs, "getkey", return_value=("S", False)):
+            self.assertEqual(aminetdoor.choose_result_lightbar(
+                self.items, title="Search: doom", extra_actions=("search",)), "search")
+        with mock.patch.object(aminetdoor, "render_lightbar"), \
+                mock.patch.object(aminetdoor.bbs, "getkey", return_value=aminetdoor.ESC):
+            self.assertIsNone(aminetdoor.choose_result_lightbar(
+                self.items, title="Search: doom", extra_actions=("search",)))
+
+    def test_readme_navigation_actions(self):
+        self.assertEqual(aminetdoor.normalize_key("N"), "next")
+        self.assertEqual(aminetdoor.normalize_key("P"), "previous")
+        self.assertEqual(aminetdoor.normalize_key(aminetdoor.ESC), "quit")
 
     def test_numbered_selector_accepts_multi_digit_and_rejects_bad_values(self):
         with mock.patch.object(aminetdoor, "render_numbered"), \
@@ -385,6 +404,9 @@ class SelectorTests(unittest.TestCase):
             with mock.patch.object(aminetdoor, "render_numbered"), \
                     mock.patch.object(aminetdoor.bbs, "getkey", side_effect=[value, "\r"]):
                 self.assertIsNone(aminetdoor.choose_result_numbered(self.items))
+        with mock.patch.object(aminetdoor, "render_numbered"), \
+                mock.patch.object(aminetdoor.bbs, "getkey", return_value=aminetdoor.ESC):
+            self.assertIsNone(aminetdoor.choose_result_numbered(self.items))
 
 
 class MysticInputTests(unittest.TestCase):
@@ -426,10 +448,18 @@ class MysticInputTests(unittest.TestCase):
             self.assertIsNone(aminetdoor.choose_result_lightbar(items, title="Search: doom"))
 
     def test_escape_exits_main_menu_and_readme(self):
-        with mock.patch.object(aminetdoor.bbs, "onekey", return_value=aminetdoor.ESC):
-            aminetdoor.main()
+        for key in ("Q", aminetdoor.ESC):
+            with mock.patch.object(aminetdoor.bbs, "onekey", return_value=key):
+                aminetdoor.main()
         with mock.patch.object(aminetdoor, "fetch_readme", return_value="README"), \
                 mock.patch.object(aminetdoor.bbs, "onekey", return_value=aminetdoor.ESC):
+            aminetdoor.read_readme("Package", "pkg/name")
+
+    def test_readme_supports_next_previous_and_escape(self):
+        with mock.patch.object(aminetdoor, "fetch_readme",
+                               return_value="\n".join("line %d" % i for i in range(20))), \
+                mock.patch.object(aminetdoor.bbs, "onekey",
+                                  side_effect=["N", "P", aminetdoor.ESC]):
             aminetdoor.read_readme("Package", "pkg/name")
 
     def test_pause_accepts_escape(self):

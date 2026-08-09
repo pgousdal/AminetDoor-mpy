@@ -6,6 +6,8 @@
   input, README pages, About, and pause/error screens.
 - Search and numbered input use a small Mystic-native `getkey()` line reader
   so Escape, Enter, Backspace, and bounded printable input are explicit.
+- Centralized navigation preserves Mystic's live-tested Escape (`"\\x1b"`) and
+  extended arrow (`("H", True)` / `("P", True)`) representations.
 
 ## Network diagnostics
 
