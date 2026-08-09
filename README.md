@@ -8,6 +8,7 @@ Python 3 (`.mpy`) script.
 - Recent Aminet uploads, fetched from Aminet's RSS feed
 - Browse Aminet's category hierarchy and package listings
 - Search Aminet by package name or keyword
+- Architecture-aware Browse and Search, defaulting to 68k AmigaOS + generic
 - Lightbar selection from the recent-uploads list
 - Numbered selection compatibility mode
 - Paged, terminal-friendly README reader (76-column wrapping, 16-line pages)
@@ -72,9 +73,21 @@ S  Search Aminet
 ```
 
 Browse follows Aminet's public category tree. Within Browse, `B` goes back one
-level and `R` returns to the root. Search uses Aminet's public simple search
-interface with a maximum query length of 60 characters. Both modes open the
-same README reader as Recent.
+level and `R` returns to the root. Search uses Aminet's public search interface
+with a maximum query length of 60 characters. Both modes open the same README
+reader as Recent.
+
+Architecture filtering is configured in `aminetdoor.mpy`:
+
+```python
+ARCHITECTURE_FILTER = ("m68k-amigaos", "generic")
+```
+
+The default targets classic 68k Amiga users while retaining architecture-
+independent Aminet content. Set `ARCHITECTURE_FILTER = None` to show all
+architectures. The filter applies to Browse package lists and Search; Recent
+remains unfiltered because its RSS feed does not expose reliable architecture
+metadata.
 
 Recent uploads (default lightbar selector):
 
@@ -114,17 +127,19 @@ HTML pages is performed in M0; RSS/XML is used because it is far more stable
 to parse than HTML that can change layout at any time.
 
 M1 Browse reads `GET https://aminet.net/tree` with the `path` query parameter
-for category levels, then reads `GET https://aminet.net/<category-path>` for
-leaf package listings. M1 Search reads `GET https://aminet.net/search` with
-the `query` parameter and uses `page` only for later public result pages.
-Responses are parsed with Python's standard-library `html.parser` and are
-bounded before parsing.
+for category levels. M1.1 package listings use Aminet's verified Advanced
+Search form with `type=advanced`, `path[]`, `q_arch=AND`, and repeated
+`arch[]` values. M1 Search uses the same Advanced Search architecture fields
+when filtering is enabled; `ARCHITECTURE_FILTER = None` retains the original
+simple `GET https://aminet.net/search?query=...` request. Responses are parsed
+with Python's standard-library `html.parser` and are bounded before parsing.
 
 ## Scope
 
-M1 intentionally stays read-only. It does not include architecture filtering,
-local README caching, a "package of the day" random spotlight, screenshots,
-downloads, uploads, or account functionality. See `docs/M1.md`.
+M1.1 intentionally stays read-only. It does not include interactive
+architecture selection, local README caching, a "package of the day" random
+spotlight, screenshots, downloads, uploads, or account functionality. See
+`docs/M1.md`.
 
 Automated/offline validation: complete. Live Mystic validation: pending.
 

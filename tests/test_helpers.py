@@ -88,6 +88,21 @@ SAMPLE_SEARCH_EMPTY = """
 <body><font>Found 0 matching packages</font></body></html>
 """
 
+SAMPLE_ARCH_SEARCH = """
+<html><body><table>
+<tr><th>name</th><th>version</th><th>path</th><th>dls</th><th>size</th>
+<th>date</th><th>arch</th><th>desc</th></tr>
+<tr><td><a href="/game/shoot/CLASSIC.lha">CLASSIC.lha</a></td><td>1.0</td>
+<td>game/shoot</td><td>10</td><td>1K</td><td>2026-01-01</td>
+<td><a href="//m68k.aminet.net"><img src="/pics/m68k-amigaos.png"></a></td>
+<td><a href="/package/game/shoot/CLASSIC">Classic</a></td></tr>
+<tr><td><a href="/game/shoot/GENERIC.lha">GENERIC.lha</a></td><td>1.0</td>
+<td>game/shoot</td><td>10</td><td>1K</td><td>2026-01-01</td>
+<td><a href="//generic.aminet.net"><img src="/pics/generic.png"></a></td>
+<td><a href="/package/game/shoot/GENERIC">Generic</a></td></tr>
+</table></body></html>
+"""
+
 
 class HelperTests(unittest.TestCase):
     def test_common_punctuation_is_normalized(self):
@@ -155,6 +170,11 @@ class HTMLParsingTests(unittest.TestCase):
         self.assertEqual(len(packages), 2)
         self.assertEqual(packages[1]["title"], "BOOM_RTG.lha")
         self.assertIn("&", packages[1]["description"])
+
+    def test_package_parser_keeps_architecture_metadata(self):
+        _, packages = aminetdoor.parse_aminet_html(SAMPLE_ARCH_SEARCH.encode("latin-1"))
+        self.assertEqual([item["architecture"] for item in packages],
+                         ["m68k-amigaos", "generic"])
 
     def test_search_parser_accepts_zero_result_page(self):
         self.assertEqual(aminetdoor.parse_aminet_html(SAMPLE_SEARCH_EMPTY.encode("latin-1")),
@@ -282,7 +302,17 @@ class NetworkTests(unittest.TestCase):
         self.assertEqual(len(packages), 2)
         self.assertIn("/tree?path=game%2Fshoot", urlopen.call_args_list[0].args[0].full_url)
         self.assertEqual(urlopen.call_args_list[1].args[0].full_url,
-                         "https://aminet.net/game/shoot")
+                         "https://aminet.net/search?type=advanced&path%5B%5D=game%2Fshoot&q_arch=AND&arch%5B%5D=m68k-amigaos&arch%5B%5D=generic")
+
+    @mock.patch.object(aminetdoor.urllib.request, "urlopen")
+    def test_browse_tree_stays_complete_with_architecture_filter(self, urlopen):
+        urlopen.return_value = self.response(SAMPLE_BROWSE.encode("latin-1"))
+        categories, packages = aminetdoor.fetch_browse()
+        self.assertEqual(len(packages), 1)
+        self.assertIn("game", [item["path"] for item in categories])
+        self.assertEqual(urlopen.call_count, 1)
+        self.assertEqual(urlopen.call_args.args[0].full_url,
+                         "https://aminet.net/tree")
 
     @mock.patch.object(aminetdoor.urllib.request, "urlopen")
     def test_fetch_search_is_bounded_and_parsed(self, urlopen):
@@ -290,8 +320,60 @@ class NetworkTests(unittest.TestCase):
         packages = aminetdoor.fetch_search(" doom & amiga ")
         self.assertEqual(len(packages), 2)
         self.assertEqual(urlopen.call_args.args[0].full_url,
-                         "https://aminet.net/search?query=doom+%26+amiga")
+                         "https://aminet.net/search?type=advanced&name=doom+%26+amiga&q_desc=OR&desc=doom+%26+amiga&q_arch=AND&arch%5B%5D=m68k-amigaos&arch%5B%5D=generic")
         self.assertEqual(urlopen.call_args.kwargs["timeout"], aminetdoor.HTTP_TIMEOUT)
+
+    @mock.patch.object(aminetdoor.urllib.request, "urlopen")
+    def test_unfiltered_search_preserves_simple_search_request(self, urlopen):
+        urlopen.return_value = self.response(SAMPLE_SEARCH.encode("latin-1"))
+        with mock.patch.object(aminetdoor, "ARCHITECTURE_FILTER", None):
+            aminetdoor.fetch_search("doom")
+        self.assertEqual(urlopen.call_args.args[0].full_url,
+                         "https://aminet.net/search?query=doom")
+
+    @mock.patch.object(aminetdoor.urllib.request, "urlopen")
+    def test_unfiltered_browse_preserves_category_request(self, urlopen):
+        urlopen.side_effect = [
+            self.response(SAMPLE_BROWSE.encode("latin-1")),
+            self.response(SAMPLE_SEARCH.encode("latin-1")),
+        ]
+        with mock.patch.object(aminetdoor, "ARCHITECTURE_FILTER", None):
+            aminetdoor.fetch_browse("game/shoot")
+        self.assertEqual(urlopen.call_args_list[1].args[0].full_url,
+                         "https://aminet.net/game/shoot")
+
+
+class ArchitectureTests(unittest.TestCase):
+    def test_filter_configuration(self):
+        self.assertIsNone(aminetdoor.normalize_architecture_filter(None))
+        self.assertEqual(aminetdoor.normalize_architecture_filter(("m68k-amigaos",)),
+                         ("m68k-amigaos",))
+        self.assertEqual(aminetdoor.normalize_architecture_filter(
+            ("m68k-amigaos", "generic")), ("m68k-amigaos", "generic"))
+        self.assertIsNone(aminetdoor.normalize_architecture_filter(("invalid",)))
+        self.assertEqual(aminetdoor.normalize_architecture_filter((["invalid"], "generic")),
+                         ("generic",))
+        self.assertEqual(aminetdoor.normalize_architecture_filter(
+            ("invalid", "generic", "generic")), ("generic",))
+
+    def test_advanced_search_url_uses_verified_architecture_fields(self):
+        url = aminetdoor.build_advanced_search_url(
+            query="doom", path="game/shoot",
+            architectures=("m68k-amigaos", "generic"))
+        self.assertEqual(url, "https://aminet.net/search?type=advanced&name=doom&"
+                         "q_desc=OR&desc=doom&path%5B%5D=game%2Fshoot&q_arch=AND&"
+                         "arch%5B%5D=m68k-amigaos&arch%5B%5D=generic")
+
+    def test_merge_packages_deduplicates_stably_and_applies_limit_after_merge(self):
+        first = [{"path": "one", "title": "One"},
+                 {"path": "duplicate", "title": "First"}]
+        second = [{"path": "duplicate", "description": "Complete"},
+                  {"path": "two", "title": "Two"},
+                  {"path": "three", "title": "Three"}]
+        merged = aminetdoor.merge_packages([first, second], limit=3)
+        self.assertEqual([item["path"] for item in merged],
+                         ["one", "duplicate", "two"])
+        self.assertEqual(merged[1]["description"], "Complete")
 
 
 class SelectorTests(unittest.TestCase):

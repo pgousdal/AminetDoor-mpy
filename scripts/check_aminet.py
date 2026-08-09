@@ -22,6 +22,10 @@ URLS = (
     "https://aminet.net/tree",
     "https://aminet.net/search",
     "https://aminet.net/search?query=doom",
+    "https://aminet.net/search?type=advanced&name=doom&q_desc=OR&desc=doom&q_arch=AND&arch%5B%5D=m68k-amigaos",
+    "https://aminet.net/search?type=advanced&name=doom&q_desc=OR&desc=doom&q_arch=AND&arch%5B%5D=generic",
+    "https://aminet.net/search?type=advanced&path%5B%5D=game%2Fshoot&q_arch=AND&arch%5B%5D=m68k-amigaos",
+    "https://aminet.net/search?type=advanced&path%5B%5D=game%2Fshoot&q_arch=AND&arch%5B%5D=generic",
 )
 
 

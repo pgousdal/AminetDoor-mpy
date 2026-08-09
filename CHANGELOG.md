@@ -1,5 +1,12 @@
 # Changelog
 
+## M1.1 Architecture filtering
+
+- Added SysOp-configured architecture filtering for Browse package listings
+  and Search, defaulting to `m68k-amigaos` plus `generic`.
+- Uses Aminet's verified Advanced Search `arch[]` fields; the complete Browse
+  category tree and unfiltered Recent RSS behavior remain unchanged.
+
 ## Mystic-native ESC navigation
 
 - ESC is now presented as the primary Back/Cancel/Menu key across menus, selectors, Search

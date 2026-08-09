@@ -33,6 +33,30 @@ README_URL_TEMPLATE = "https://aminet.net/%s.readme"
 TREE_URL = "https://aminet.net/tree"
 CATEGORY_URL_TEMPLATE = "https://aminet.net/%s"
 SEARCH_URL = "https://aminet.net/search"
+ARCHITECTURE_FILTER = ("m68k-amigaos", "generic")
+# Aminet's Advanced Search accepts these exact architecture identifiers.
+KNOWN_ARCHITECTURES = {
+    "m68k-amigaos",
+    "ppc-amigaos",
+    "ppc-morphos",
+    "i386-aros",
+    "i386-amithlon",
+    "ppc-warpup",
+    "ppc-powerup",
+    "generic",
+    "other",
+}
+ARCHITECTURE_HOSTS = {
+    "m68k-amigaos": "m68k",
+    "ppc-amigaos": "os4",
+    "ppc-morphos": "mos",
+    "i386-aros": "aros",
+    "i386-amithlon": "amithlon",
+    "ppc-warpup": "wup",
+    "ppc-powerup": "pup",
+    "generic": "generic",
+    "other": "other",
+}
 USER_AGENT = "AminetDoor/0.1.0 (Mystic BBS door; https://github.com/pgousdal/AminetDoor-mpy)"
 HTTP_TIMEOUT = 10
 RECENT_LIMIT = 20
@@ -228,6 +252,68 @@ def package_path_from_link(link):
     return "/".join(parts)
 
 
+def normalize_architecture_filter(value):
+    """Return valid configured architectures, or None for an unfiltered view."""
+    if value is None or isinstance(value, str):
+        return None
+    try:
+        values = list(value)
+    except TypeError:
+        return None
+    result = []
+    for architecture in values:
+        if (isinstance(architecture, str)
+                and architecture in KNOWN_ARCHITECTURES
+                and architecture not in result):
+            result.append(architecture)
+    return tuple(result) or None
+
+
+def build_advanced_search_url(query="", path="", architectures=(), page=1):
+    """Build Aminet's public Advanced Search URL with architecture filters."""
+    values = [("type", "advanced")]
+    query = terminal_text(query).strip()[:MAX_SEARCH_QUERY]
+    if query:
+        # This mirrors the public simple-search expansion to name OR description.
+        values.extend((("name", query), ("q_desc", "OR"), ("desc", query)))
+    if path:
+        values.append(("path[]", path.strip("/")))
+    if architectures:
+        values.append(("q_arch", "AND"))
+        values.extend(("arch[]", architecture) for architecture in architectures)
+    if page > 1:
+        values.append(("page", page))
+    return SEARCH_URL + "?" + urllib.parse.urlencode(values)
+
+
+def architecture_from_link(link):
+    """Return Aminet's architecture identifier from a package-row link."""
+    parsed = urllib.parse.urlparse(urllib.parse.urljoin("https://aminet.net/", link))
+    host = (parsed.hostname or "").lower()
+    return next((architecture for architecture, short_host in ARCHITECTURE_HOSTS.items()
+                 if host == short_host + ".aminet.net"), "")
+
+
+def merge_packages(package_lists, limit=None):
+    """Merge package records by canonical path, preserving first-seen order."""
+    merged = {}
+    order = []
+    for packages in package_lists:
+        for package in packages:
+            path = package.get("path", "") if isinstance(package, dict) else ""
+            if not path:
+                continue
+            if path not in merged:
+                merged[path] = dict(package)
+                order.append(path)
+            else:
+                for key, value in package.items():
+                    if not merged[path].get(key) and value:
+                        merged[path][key] = value
+    result = [merged[path] for path in order]
+    return result if limit is None else result[:limit]
+
+
 def parse_recent_feed(raw_xml):
     """Parse an Aminet RSS feed into a list of recent-upload dicts."""
     try:
@@ -355,7 +441,12 @@ def _package_from_row(row):
         return None
     description = row[-1][0]
     description = re.sub(r"\s+-\s+\(readme\)\s*$", "", description)
-    return {
+    architecture = next(
+        (architecture_from_link(href) for href, _ in links
+         if architecture_from_link(href)),
+        "",
+    )
+    package = {
         "title": file_title or path.rsplit("/", 1)[-1],
         "path": path,
         "description": clean_extract(description),
@@ -363,6 +454,9 @@ def _package_from_row(row):
         "size": row[4][0] if len(row) > 4 else "",
         "link": urllib.parse.urljoin(TREE_URL, file_link or detail_link),
     }
+    if architecture:
+        package["architecture"] = architecture
+    return package
 
 
 def parse_aminet_html(raw_html):
@@ -429,8 +523,14 @@ def fetch_browse(path=""):
     categories, packages = parse_aminet_html(raw)
     categories = child_categories(categories, path)
     if path and not categories:
-        raw = http_get(CATEGORY_URL_TEMPLATE % urllib.parse.quote(path, safe="/"))
+        architectures = normalize_architecture_filter(ARCHITECTURE_FILTER)
+        if architectures is None:
+            url = CATEGORY_URL_TEMPLATE % urllib.parse.quote(path, safe="/")
+        else:
+            url = build_advanced_search_url(path=path, architectures=architectures)
+        raw = http_get(url)
         _, packages = parse_aminet_html(raw)
+        packages = merge_packages([packages])
     if DEBUG_NETWORK:
         bbs.writeln("|08Browse URL: %s" % (TREE_URL + ("?" + query if query else "")))
         bbs.writeln("|08Parsed categories: %d" % len(categories))
@@ -449,10 +549,14 @@ def build_search_url(query, page=1):
 
 def fetch_search(query):
     """Fetch the first page of Aminet's public search results."""
-    url = build_search_url(query)
+    architectures = normalize_architecture_filter(ARCHITECTURE_FILTER)
+    if architectures is None:
+        url = build_search_url(query)
+    else:
+        url = build_advanced_search_url(query=query, architectures=architectures)
     raw = http_get(url)
     _, packages = parse_aminet_html(raw)
-    packages = packages[:SEARCH_RESULT_LIMIT]
+    packages = merge_packages([packages], SEARCH_RESULT_LIMIT)
     if DEBUG_NETWORK:
         bbs.writeln("|08Search URL: %s" % url)
         bbs.writeln("|08Search result count: %d" % len(packages))
