@@ -1,12 +1,13 @@
 # AminetDoor
 
-**AminetDoor M0 / v0.1.0** is a small Aminet reader written as a Mystic BBS
+**AminetDoor M0.2 / v0.1.0** is a small Aminet reader written as a Mystic BBS
 Python 3 (`.mpy`) script.
 
 ## M0 features
 
 - Recent Aminet uploads, fetched from Aminet's RSS feed
-- Numbered selection from the recent-uploads list
+- Lightbar selection from the recent-uploads list
+- Numbered selection compatibility mode
 - Paged, terminal-friendly README reader (76-column wrapping, 16-line pages)
 - Next / previous page navigation
 - Graceful HTTP/feed/decoding error messages
@@ -58,6 +59,19 @@ A  About
 Q  Quit
 ```
 
+Recent uploads (default lightbar selector):
+
+```text
+Up / Down  Move selection
+Enter      Read selected package
+Q          Return to the main menu
+```
+
+Set `RESULT_SELECTOR = "numbered"` near the top of `aminetdoor.mpy` to use
+multi-digit numbered input instead. Invalid selector values safely fall back
+to numbered mode. Lightbar Up/Down uses Mystic-native extended key handling;
+the baseline layout remains 80x25.
+
 README reader:
 
 ```text
@@ -85,6 +99,8 @@ M0 intentionally stays small. It does not yet include category Browse,
 keyword Search, architecture filtering, local README caching, a "package of
 the day" random spotlight, or screenshot rendering. Those are good M1
 candidates -- see `docs/M0.md`.
+
+Automated/offline validation: complete. Live Mystic validation: pending.
 
 ## Licensing
 

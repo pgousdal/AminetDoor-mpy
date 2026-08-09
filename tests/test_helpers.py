@@ -16,6 +16,7 @@ stub = types.ModuleType("mystic_bbs")
 stub.write = lambda *args, **kwargs: None
 stub.writeln = lambda *args, **kwargs: None
 stub.getstr = lambda *args, **kwargs: ""
+stub.getkey = lambda *args, **kwargs: ("Q", False)
 stub.onekey = lambda *args, **kwargs: "Q"
 sys.modules["mystic_bbs"] = stub
 
@@ -142,6 +143,86 @@ class NetworkTests(unittest.TestCase):
         urlopen.return_value = self.response(b"   \n\n  ")
         with self.assertRaisesRegex(aminetdoor.AminetDoorError, "No readable text"):
             aminetdoor.fetch_readme("comm/net/amiagent-0.5.3")
+
+
+class SelectorTests(unittest.TestCase):
+    def setUp(self):
+        self.items = [{"title": "Package %d" % i, "path": "pkg/%d" % i}
+                      for i in range(1, 21)]
+
+    def test_mystic_extended_keys_are_normalized(self):
+        # These arrow tuples were confirmed on a live Mystic BBS installation.
+        self.assertEqual(aminetdoor.normalize_selector_key(("H", True)), "up")
+        self.assertEqual(aminetdoor.normalize_selector_key(("P", True)), "down")
+        self.assertNotEqual(aminetdoor.normalize_selector_key(("H", False)), "up")
+        self.assertNotEqual(aminetdoor.normalize_selector_key(("P", False)), "down")
+        self.assertEqual(aminetdoor.normalize_selector_key("Q"), "quit")
+        self.assertEqual(aminetdoor.normalize_selector_key("q"), "quit")
+        self.assertEqual(aminetdoor.normalize_selector_key(("\r", False)), "enter")
+        self.assertEqual(aminetdoor.normalize_selector_key(("x", False)), "unknown")
+
+    def test_selector_mode_dispatch_and_invalid_fallback(self):
+        with mock.patch.object(aminetdoor, "RESULT_SELECTOR", "lightbar"), \
+                mock.patch.object(aminetdoor, "choose_result_lightbar", return_value=self.items[0]) as lightbar, \
+                mock.patch.object(aminetdoor, "choose_result_numbered") as numbered:
+            self.assertIs(aminetdoor.choose_recent_result(self.items), self.items[0])
+            lightbar.assert_called_once_with(self.items)
+            numbered.assert_not_called()
+
+        with mock.patch.object(aminetdoor, "RESULT_SELECTOR", "numbered"), \
+                mock.patch.object(aminetdoor, "choose_result_numbered", return_value=self.items[1]) as numbered:
+            self.assertIs(aminetdoor.choose_recent_result(self.items), self.items[1])
+            numbered.assert_called_once_with(self.items)
+
+        with mock.patch.object(aminetdoor, "RESULT_SELECTOR", "invalid"):
+            self.assertEqual(aminetdoor.selector_mode(), "numbered")
+
+    def test_viewport_navigation_and_boundaries(self):
+        state = (0, 0)
+        state = aminetdoor.move_selector(*state, "down", 20)
+        self.assertEqual(state[:2], (1, 0))
+        state = aminetdoor.move_selector(*state[:2], "up", 20)
+        self.assertEqual(state[:2], (0, 0))
+        state = aminetdoor.move_selector(0, 0, "up", 20)
+        self.assertEqual(state[:2], (0, 0))
+        state = aminetdoor.move_selector(19, 8, "down", 20)
+        self.assertEqual(state[:2], (19, 8))
+        state = (0, 0)
+        for _ in range(19):
+            state = aminetdoor.move_selector(*state[:2], "down", 20)
+        self.assertEqual(state[:2], (19, 8))
+        state = aminetdoor.move_selector(*state[:2], "up", 20)
+        self.assertEqual(state[:2], (18, 8))
+        state = aminetdoor.move_selector(12, 8, "up", 20)
+        self.assertEqual(state[:2], (11, 8))
+        state = aminetdoor.move_selector(8, 8, "up", 20)
+        self.assertEqual(state[:2], (7, 7))
+
+    def test_lightbar_enter_and_quit(self):
+        with mock.patch.object(aminetdoor, "render_lightbar"), \
+                mock.patch.object(aminetdoor.bbs, "getkey", side_effect=[("P", True), ("\r", False)]):
+            self.assertIs(aminetdoor.choose_result_lightbar(self.items), self.items[1])
+        with mock.patch.object(aminetdoor, "render_lightbar"), \
+                mock.patch.object(aminetdoor.bbs, "getkey", return_value=("Q", False)):
+            self.assertIsNone(aminetdoor.choose_result_lightbar(self.items))
+
+    def test_numbered_selector_accepts_multi_digit_and_rejects_bad_values(self):
+        with mock.patch.object(aminetdoor, "render_numbered"), \
+                mock.patch.object(aminetdoor.bbs, "getstr", side_effect=["0", "21", "abc", "", "10"]):
+            self.assertIs(aminetdoor.choose_result_numbered(self.items), self.items[9])
+        with mock.patch.object(aminetdoor, "render_numbered"), \
+                mock.patch.object(aminetdoor.bbs, "getstr", return_value="1"):
+            self.assertIs(aminetdoor.choose_result_numbered(self.items), self.items[0])
+        with mock.patch.object(aminetdoor, "render_numbered"), \
+                mock.patch.object(aminetdoor.bbs, "getstr", return_value="9"):
+            self.assertIs(aminetdoor.choose_result_numbered(self.items), self.items[8])
+        with mock.patch.object(aminetdoor, "render_numbered"), \
+                mock.patch.object(aminetdoor.bbs, "getstr", return_value="20"):
+            self.assertIs(aminetdoor.choose_result_numbered(self.items), self.items[19])
+        for value in ("Q", "q"):
+            with mock.patch.object(aminetdoor, "render_numbered"), \
+                    mock.patch.object(aminetdoor.bbs, "getstr", return_value=value):
+                self.assertIsNone(aminetdoor.choose_result_numbered(self.items))
 
 
 if __name__ == "__main__":

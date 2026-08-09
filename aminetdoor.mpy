@@ -25,9 +25,12 @@ README_URL_TEMPLATE = "https://aminet.net/%s.readme"
 USER_AGENT = "AminetDoor/0.1.0 (Mystic BBS door; https://github.com/pgousdal/AminetDoor-mpy)"
 HTTP_TIMEOUT = 10
 RECENT_LIMIT = 20
+RESULT_SELECTOR = "lightbar"  # "lightbar" or "numbered"
+VISIBLE_RESULT_ROWS = 12
 TEXT_WIDTH = 76
 PAGE_LINES = 16
 MAX_README_BYTES = 40000
+DEBUG_KEYS = False
 
 
 class AminetDoorError(Exception):
@@ -188,6 +191,67 @@ def pause(message="Press any key"):
     bbs.onekey(chr(13) + "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ", False)
 
 
+def diagnose_key(value):
+    """Optionally show the raw value returned by Mystic while debugging keys."""
+    if not DEBUG_KEYS:
+        return
+    values = value if isinstance(value, tuple) else (value,)
+    bbs.writeln("|08key=%r type=%s length=%s ordinals=%r" % (
+        value,
+        type(value).__name__,
+        len(value) if hasattr(value, "__len__") else "n/a",
+        [ord(ch) for ch in values[0] if isinstance(values[0], str)]
+        if values and isinstance(values[0], str) else [],
+    ))
+
+
+def normalize_selector_key(key):
+    """Translate Mystic getkey() values into selector actions."""
+    diagnose_key(key)
+    value = key[0] if isinstance(key, tuple) and key else key
+    extended = (
+        isinstance(key, tuple) and len(key) > 1 and key[1] is True
+    )
+    if extended and value == "H":
+        return "up"
+    if extended and value == "P":
+        return "down"
+    if value in ("\r", "\n", 13):
+        return "enter"
+    if isinstance(value, str) and value.upper() == "Q":
+        return "quit"
+    return "unknown"
+
+
+def selector_mode():
+    """Return a safe selector mode, falling back for a SysOp typo."""
+    if RESULT_SELECTOR in ("lightbar", "numbered"):
+        return RESULT_SELECTOR
+    return "numbered"
+
+
+def move_selector(selected_index, viewport_start, action, item_count,
+                  visible_rows=VISIBLE_RESULT_ROWS):
+    """Apply a selector action and return (selection, viewport) state."""
+    if not item_count:
+        return 0, 0, action
+    last_index = item_count - 1
+    if action == "up":
+        selected_index = max(0, selected_index - 1)
+    elif action == "down":
+        selected_index = min(last_index, selected_index + 1)
+    elif action in ("enter", "quit"):
+        return selected_index, viewport_start, action
+
+    if selected_index < viewport_start:
+        viewport_start = selected_index
+    elif selected_index >= viewport_start + visible_rows:
+        viewport_start = selected_index - visible_rows + 1
+    max_start = max(0, item_count - visible_rows)
+    viewport_start = min(viewport_start, max_start)
+    return selected_index, viewport_start, "unknown"
+
+
 def show_error(message):
     bbs.writeln("")
     bbs.writeln("|12Error: |07" + terminal_text(message))
@@ -233,6 +297,89 @@ def read_readme(package_title, path):
             return
 
 
+def render_lightbar(items, selected_index, viewport_start):
+    heading("Recent uploads")
+    visible_end = min(viewport_start + VISIBLE_RESULT_ROWS, len(items))
+    for index in range(viewport_start, visible_end):
+        marker = ">  " if index == selected_index else "   "
+        title = terminal_text(items[index].get("title", ""))
+        width = 76 - len(marker)
+        if len(title) > width:
+            title = title[:max(0, width - 3)] + "..."
+        bbs.writeln("|15%s|07%s" % (marker, title))
+    for _ in range(VISIBLE_RESULT_ROWS - (visible_end - viewport_start)):
+        bbs.writeln("")
+    bbs.writeln("|08" + line("-"))
+    bbs.writeln("|11Up/Down Move   Enter Read   |15Q|11 Back")
+
+
+def choose_result_lightbar(items):
+    """Select an item using Mystic's native extended-key input."""
+    selected_index = 0
+    viewport_start = 0
+    while True:
+        render_lightbar(items, selected_index, viewport_start)
+        action = normalize_selector_key(bbs.getkey())
+        selected_index, viewport_start, action = move_selector(
+            selected_index, viewport_start, action, len(items)
+        )
+        if action == "enter":
+            return items[selected_index]
+        if action == "quit":
+            return None
+
+
+def render_numbered(items, page):
+    heading("Recent uploads")
+    page_count = max(1, (len(items) + VISIBLE_RESULT_ROWS - 1) // VISIBLE_RESULT_ROWS)
+    start = page * VISIBLE_RESULT_ROWS
+    end = min(start + VISIBLE_RESULT_ROWS, len(items))
+    for index in range(start, end):
+        title = terminal_text(items[index].get("title", ""))
+        if len(title) > 69:
+            title = title[:66] + "..."
+        bbs.writeln("|15 %2d.|07 %s" % (index + 1, title))
+    for _ in range(VISIBLE_RESULT_ROWS - (end - start)):
+        bbs.writeln("")
+    bbs.writeln("|08" + line("-"))
+    bbs.write("|11Choose package |08[1-%d] |11Page %d/%d, or |15Q|11: " % (
+        len(items), page + 1, page_count
+    ))
+
+
+def choose_result_numbered(items):
+    """Select an item with multi-digit Mystic string input."""
+    page = 0
+    page_count = max(1, (len(items) + VISIBLE_RESULT_ROWS - 1) // VISIBLE_RESULT_ROWS)
+    while True:
+        render_numbered(items, page)
+        value = bbs.getstr("", 2)
+        value = terminal_text(value).strip()
+        if value.upper() == "Q":
+            return None
+        if value.upper() == "N" and page < page_count - 1:
+            page += 1
+            continue
+        if value.upper() == "P" and page > 0:
+            page -= 1
+            continue
+        try:
+            index = int(value) - 1
+            if index < 0:
+                raise IndexError
+            selected = items[index]
+        except (ValueError, IndexError, TypeError):
+            continue
+        return selected
+
+
+def choose_recent_result(items):
+    """Dispatch parsed recent items to the configured result selector."""
+    if selector_mode() == "lightbar":
+        return choose_result_lightbar(items)
+    return choose_result_numbered(items)
+
+
 def show_recent():
     try:
         items = fetch_recent()
@@ -242,39 +389,26 @@ def show_recent():
     if not items:
         show_error("No recent uploads were returned.")
         return
-
-    heading("Recent uploads")
-    for index, item in enumerate(items, 1):
-        title = item["title"]
-        if len(title) > 68:
-            title = title[:65] + "..."
-        bbs.writeln("|15 %2d.|07 %s" % (index, title))
-
-    bbs.writeln("")
-    bbs.writeln("|08" + line("-"))
-    valid = "".join(str(i % 10) for i in range(1, min(len(items), 9) + 1))
-    bbs.write("|11Choose package |08[1-%d] |11or |15Q|11: " % len(items))
-    key = bbs.onekey(valid + "Q", True).upper()
-    if key == "Q":
-        return
-    try:
-        index = int(key) - 1
-        selected = items[index]
-    except (ValueError, IndexError):
-        return
-    read_readme(selected["title"], selected["path"])
+    selected = choose_recent_result(items)
+    if selected is not None:
+        read_readme(selected["title"], selected["path"])
 
 
 def about():
     heading("About")
-    bbs.writeln("|07AminetDoor is a small open-source Aminet reader for Mystic BBS.")
-    bbs.writeln("|07It uses Aminet's RSS feed and Python's standard library.")
+    bbs.writeln("|07AminetDoor is an open-source Aminet browser for Mystic BBS.")
     bbs.writeln("")
-    bbs.writeln("|07No API key. No third-party Python packages.")
-    bbs.writeln("|07Package descriptions and README text come from Aminet and")
-    bbs.writeln("|07remain subject to their original authors' licensing.")
+    bbs.writeln("|07(c) 2026 Per Gustav Ousdal")
+    bbs.writeln("|07Phrenetic BBS")
+    bbs.writeln("|07telnet: bbs.phrenetic.no")
     bbs.writeln("")
-    bbs.writeln("|08AminetDoor itself is licensed under the MIT License.")
+    bbs.writeln("|07Released under the MIT License.")
+    bbs.writeln("")
+    bbs.writeln("|08" + line("-"))
+    bbs.writeln("|07Powered by Aminet.")
+    bbs.writeln("")
+    bbs.writeln("|07Package descriptions and README text remain subject to the")
+    bbs.writeln("|07licensing/copyright terms of their original authors.")
     bbs.writeln("")
     pause()
 

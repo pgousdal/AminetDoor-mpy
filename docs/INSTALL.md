@@ -40,7 +40,11 @@ Try:
 [R] Recent uploads
 ```
 
-Then select a package and page through its README.
+Then select a package with Up/Down and Enter, and page through its README.
+The default result selector is the lightbar. For numbered compatibility mode,
+set `RESULT_SELECTOR = "numbered"` near the top of `aminetdoor.mpy`. Both modes
+retain the 80x25 baseline layout; lightbar arrows use Mystic-native extended
+key handling.
 
 ## Troubleshooting
 
@@ -64,3 +68,5 @@ indefinitely.
 Aminet's RSS feed occasionally has brief downtime windows (see Aminet's own
 status notices). Retry after a few minutes; this is reported as a friendly
 error rather than a traceback.
+
+Automated/offline validation: complete. Live Mystic validation: pending.
