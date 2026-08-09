@@ -211,6 +211,7 @@ class NetworkTests(unittest.TestCase):
         self.assertEqual(request.get_header("Accept-encoding"), "identity")
         self.assertEqual(request.get_header("Connection"), "close")
         self.assertEqual(urlopen.call_args.kwargs["timeout"], aminetdoor.HTTP_TIMEOUT)
+        self.assertIsInstance(urlopen.call_args.kwargs["context"], ssl.SSLContext)
 
     @mock.patch.object(aminetdoor.urllib.request, "urlopen")
     def test_http_error_is_safe_aminetdoor_error(self, urlopen):
@@ -239,6 +240,14 @@ class NetworkTests(unittest.TestCase):
     def test_tls_error_is_classified(self, urlopen):
         urlopen.side_effect = urllib.error.URLError(ssl.SSLError("certificate verify failed"))
         with self.assertRaisesRegex(aminetdoor.AminetDoorError, "TLS connection"):
+            aminetdoor.fetch_recent()
+
+    @mock.patch.object(aminetdoor.urllib.request, "urlopen")
+    def test_tls_certificate_error_is_classified(self, urlopen):
+        urlopen.side_effect = urllib.error.URLError(
+            ssl.SSLCertVerificationError("certificate verify failed")
+        )
+        with self.assertRaisesRegex(aminetdoor.AminetDoorError, "certificate verification failed"):
             aminetdoor.fetch_recent()
 
     @mock.patch.object(aminetdoor.urllib.request, "urlopen")

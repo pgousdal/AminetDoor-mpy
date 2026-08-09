@@ -1,5 +1,14 @@
 # Changelog
 
+## Network diagnostics
+
+- Aligned the standalone urllib probe with production User-Agent, headers,
+  timeout, response limit, and verified SSL context.
+- Added runtime, CA-path, proxy-key, and detailed exception diagnostics behind
+  `DEBUG_NETWORK`.
+- Added portable verified CA-bundle fallback and classified TLS/DNS/timeout,
+  refusal, generic network, and HTTP failures.
+
 ## M1
 
 - Added read-only Browse navigation for Aminet categories and package lists.

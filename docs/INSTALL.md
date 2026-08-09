@@ -75,6 +75,10 @@ content type, and safe exception reason details. In the door,
 `DEBUG_NETWORK = True` enables additional request and exception diagnostics;
 leave it `False` during normal caller sessions.
 
+Debug mode also reports the Python version/executable, OpenSSL version,
+default CA-file and CA-directory paths, and proxy setting names without proxy
+credentials. It never disables certificate verification.
+
 The door distinguishes DNS, TLS, refused-connection, timeout, HTTP-status, and
 generic network failures. A shared failure across all three features usually
 indicates a Mystic host or network environment issue rather than an Aminet

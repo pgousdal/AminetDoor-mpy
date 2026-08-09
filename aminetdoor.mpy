@@ -11,9 +11,11 @@ No third-party Python packages required.
 import html
 import errno
 from html.parser import HTMLParser
+import os
 import re
 import socket
 import ssl
+import sys
 import textwrap
 import unicodedata
 import urllib.error
@@ -35,6 +37,11 @@ RECENT_LIMIT = 20
 SEARCH_RESULT_LIMIT = 20
 MAX_SEARCH_QUERY = 60
 MAX_RESPONSE_BYTES = 250000
+CA_BUNDLE_CANDIDATES = (
+    "/etc/ssl/certs/ca-certificates.crt",
+    "/etc/pki/tls/certs/ca-bundle.crt",
+    "/etc/ssl/cert.pem",
+)
 RESULT_SELECTOR = "lightbar"  # "lightbar" or "numbered"
 VISIBLE_RESULT_ROWS = 12
 TEXT_WIDTH = 76
@@ -112,7 +119,8 @@ def http_get(url, max_bytes=MAX_RESPONSE_BYTES):
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT) as response:
+        with urllib.request.urlopen(
+                request, timeout=HTTP_TIMEOUT, context=verified_ssl_context()) as response:
             raw = response.read(max_bytes + 1)
             return raw[:max_bytes]
     except urllib.error.HTTPError as exc:
@@ -136,6 +144,7 @@ def debug_network_error(url, exc):
     """Display safe low-level network details only in developer mode."""
     if not DEBUG_NETWORK:
         return
+    debug_network_runtime()
     reason = getattr(exc, "reason", None)
     bbs.writeln("|08HTTP URL: %s" % url)
     bbs.writeln("|08Exception type: %s" % type(exc).__name__)
@@ -145,10 +154,39 @@ def debug_network_error(url, exc):
         bbs.writeln("|08Reason: %r" % (reason,))
 
 
+def debug_network_runtime():
+    """Display runtime and transport configuration only in developer mode."""
+    if not DEBUG_NETWORK:
+        return
+    paths = ssl.get_default_verify_paths()
+    proxies = urllib.request.getproxies()
+    bbs.writeln("|08Python: %s" % sys.version.replace("\n", " "))
+    bbs.writeln("|08Executable: %s" % sys.executable)
+    bbs.writeln("|08OpenSSL: %s" % ssl.OPENSSL_VERSION)
+    bbs.writeln("|08CA cafile: %r" % paths.cafile)
+    bbs.writeln("|08CA capath: %r" % paths.capath)
+    bbs.writeln("|08Proxy keys: %r" % sorted(proxies))
+
+
+def verified_ssl_context():
+    """Return a verified context, using a standard CA bundle when needed."""
+    context = ssl.create_default_context()
+    paths = ssl.get_default_verify_paths()
+    if ((paths.cafile and os.path.isfile(paths.cafile))
+            or (paths.capath and os.path.isdir(paths.capath))):
+        return context
+    for cafile in CA_BUNDLE_CANDIDATES:
+        if os.path.isfile(cafile):
+            return ssl.create_default_context(cafile=cafile)
+    return context
+
+
 def classify_network_error(reason):
     """Return a concise caller-safe message for a URL error reason."""
     if isinstance(reason, socket.gaierror):
         return "Could not resolve aminet.net."
+    if isinstance(reason, ssl.SSLCertVerificationError):
+        return "TLS certificate verification failed."
     if isinstance(reason, ssl.SSLError):
         return "TLS connection to Aminet failed."
     if isinstance(reason, ConnectionRefusedError):
