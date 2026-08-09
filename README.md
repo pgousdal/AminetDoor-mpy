@@ -94,14 +94,16 @@ README text caching is configured in the same script:
 
 ```python
 CACHE_ENABLED = True
-CACHE_DIR = "cache/readme"
+CACHE_DIR = "cache/readme"  # relative to Mystic's process working directory
 CACHE_MAX_AGE_SECONDS = 86400
 ```
 
-The cache is resolved beside `aminetdoor.mpy`, stores only bounded JSON README
-text, and uses stale content if a refresh fails at the network layer. Cached
-package content remains subject to its original authors' copyright and
-licensing terms.
+Relative `CACHE_DIR` values use Mystic's process working directory; set an
+absolute path when the deployment working directory is not stable. The cache
+stores only bounded JSON README text and uses stale content if a refresh fails
+at the network layer. Cache/filesystem failures bypass caching and continue
+with the normal Aminet fetch. Cached package content remains subject to its
+original authors' copyright and licensing terms.
 
 Recent uploads (default lightbar selector):
 

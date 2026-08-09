@@ -475,6 +475,42 @@ class CacheTests(unittest.TestCase):
         urlopen.assert_not_called()
 
     @mock.patch.object(aminetdoor.urllib.request, "urlopen")
+    def test_cache_does_not_require_module_file_global(self, urlopen):
+        package_path = "docs/help/no-file-global"
+        urlopen.return_value = self.response(b"README without file")
+        had_file = "__file__" in aminetdoor.__dict__
+        saved_file = aminetdoor.__dict__.pop("__file__", None)
+        try:
+            self.assertEqual(
+                aminetdoor.fetch_readme(package_path), "README without file"
+            )
+            urlopen.reset_mock()
+            self.assertEqual(
+                aminetdoor.fetch_readme(package_path), "README without file"
+            )
+            urlopen.assert_not_called()
+        finally:
+            if had_file:
+                aminetdoor.__dict__["__file__"] = saved_file
+
+    @mock.patch.object(aminetdoor.urllib.request, "urlopen")
+    def test_unwritable_cache_falls_back_to_network(self, urlopen):
+        package_path = "docs/help/unwritable"
+        urlopen.return_value = self.response(b"network README")
+        with mock.patch.object(aminetdoor.os, "makedirs",
+                               side_effect=PermissionError("denied")):
+            self.assertEqual(aminetdoor.fetch_readme(package_path), "network README")
+        self.assertEqual(urlopen.call_count, 1)
+
+    @mock.patch.object(aminetdoor.urllib.request, "urlopen")
+    def test_invalid_cache_directory_falls_back_to_network(self, urlopen):
+        package_path = "docs/help/invalid-cache-dir"
+        urlopen.return_value = self.response(b"network README")
+        with mock.patch.object(aminetdoor, "CACHE_DIR", None):
+            self.assertEqual(aminetdoor.fetch_readme(package_path), "network README")
+        self.assertEqual(urlopen.call_count, 1)
+
+    @mock.patch.object(aminetdoor.urllib.request, "urlopen")
     def test_stale_cache_refreshes(self, urlopen):
         package_path = "game/shoot/old"
         aminetdoor.write_readme_cache(package_path, "old README")

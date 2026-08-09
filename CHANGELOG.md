@@ -5,6 +5,8 @@
 - Added a bounded JSON cache for package README text with a 24-hour default TTL.
 - Cache writes are atomic; corrupt entries are ignored and stale entries can
   serve during transient network failures.
+- Made cache path resolution Mystic `.mpy` safe and fail open on filesystem
+  configuration or permission errors.
 
 ## Transient Aminet backend failures
 

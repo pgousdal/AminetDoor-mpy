@@ -695,11 +695,10 @@ def fetch_readme(path):
 
 
 def cache_directory():
-    """Resolve relative cache configuration beside the installed script."""
-    if os.path.isabs(CACHE_DIR):
-        return CACHE_DIR
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(script_dir, CACHE_DIR)
+    """Resolve an absolute cache path or one relative to Mystic's cwd."""
+    if not isinstance(CACHE_DIR, str) or not CACHE_DIR:
+        raise ValueError("CACHE_DIR must be a non-empty path")
+    return os.path.abspath(CACHE_DIR)
 
 
 def readme_cache_path(package_path):
@@ -710,9 +709,9 @@ def readme_cache_path(package_path):
 
 def read_readme_cache(package_path):
     """Read and validate one cache entry, returning (text, fresh) or None."""
-    cache_path = readme_cache_path(package_path)
-    max_file_bytes = MAX_README_BYTES * 6 + 4096
     try:
+        cache_path = readme_cache_path(package_path)
+        max_file_bytes = MAX_README_BYTES * 6 + 4096
         if os.path.getsize(cache_path) > max_file_bytes:
             return None
         with open(cache_path, "r", encoding="utf-8") as stream:
@@ -736,18 +735,19 @@ def read_readme_cache(package_path):
             return None
         fresh = time.time() - fetched_at <= CACHE_MAX_AGE_SECONDS
         return text, fresh
-    except (OSError, TypeError, ValueError, UnicodeError):
+    except (OSError, TypeError, ValueError, UnicodeError) as exc:
+        debug_cache("README cache unavailable: %r" % (exc,))
         return None
 
 
 def write_readme_cache(package_path, text):
     """Atomically write one validated README cache entry when possible."""
-    if len(text.encode("utf-8")) > MAX_README_BYTES:
-        return False
-    directory = cache_directory()
-    cache_path = readme_cache_path(package_path)
     temporary_path = None
     try:
+        if len(text.encode("utf-8")) > MAX_README_BYTES:
+            return False
+        directory = cache_directory()
+        cache_path = readme_cache_path(package_path)
         os.makedirs(directory, exist_ok=True)
         payload = json.dumps({
             "package_path": package_path,
@@ -764,7 +764,8 @@ def write_readme_cache(package_path, text):
         os.replace(temporary_path, cache_path)
         temporary_path = None
         return True
-    except (OSError, TypeError, ValueError, UnicodeError):
+    except (OSError, TypeError, ValueError, UnicodeError) as exc:
+        debug_cache("README cache unavailable: %r" % (exc,))
         return False
     finally:
         if temporary_path is not None:

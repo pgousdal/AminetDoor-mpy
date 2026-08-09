@@ -24,6 +24,15 @@ AminetDoor is a small Mystic BBS Python 3 door for browsing Aminet.
 - Architecture filtering is SysOp configuration in `aminetdoor.mpy`; it must
   use verified Aminet metadata or form fields, not filename inference.
 
+## Mystic Python Runtime Compatibility
+
+Mystic `.mpy` execution must not assume normal script globals such as
+`__file__` are available.
+
+Runtime filesystem locations must use explicit configuration or Mystic-
+confirmed runtime facilities. Optional features such as caches must fail open:
+cache/filesystem failure must never prevent core door functionality.
+
 ## Mystic Door Navigation Standard
 
 - ESC     Back / Cancel / Menu / Exit the current context
