@@ -5,6 +5,12 @@
 - Added a deterministic daily spotlight sourced from the existing Recent feed.
 - Reuses the current README reader and cache without adding another endpoint.
 
+## M1.6 Favorites
+
+- Added per-user local JSON bookmarks with atomic writes and Favorites lightbar
+  management.
+- Favorites use Mystic's `getuserid()` identity and fail open on storage errors.
+
 ## M1.3 Quick Path
 
 - Added `J` in Browse to jump directly to validated Aminet category paths.

@@ -65,6 +65,7 @@ R  Recent uploads
 B  Browse Aminet
 S  Search Aminet
 P  Package of the Day
+F  Favorites
 A  About
 Q  Return to BBS
 ```
@@ -91,6 +92,17 @@ metadata.
 Package of the Day selects one deterministic package from the current Recent
 feed. All callers see the same spotlight for the same local calendar day. Its
 candidate pool inherits Recent's unfiltered architecture behavior.
+
+Favorites are per-user bookmarks stored locally on the BBS under
+`data/users/favorites` by default. Press `F` in package selectors, the README
+reader, or Package of the Day to toggle a bookmark; use `F` from the main menu
+to open Favorites and `D` to remove one. Favorites are not sent to Aminet or
+synced externally. Set `USER_DATA_DIR` to an absolute path when the Mystic
+working directory is not stable:
+
+```python
+USER_DATA_DIR = "data/users"
+```
 
 README text caching is configured in the same script:
 

@@ -116,6 +116,8 @@ MAX_README_BYTES = 40000
 CACHE_ENABLED = True
 CACHE_DIR = "cache/readme"
 CACHE_MAX_AGE_SECONDS = 86400
+USER_DATA_DIR = "data/users"
+MAX_FAVORITES_BYTES = 100000
 DEBUG_KEYS = False
 DEBUG_NETWORK = False
 
@@ -868,6 +870,156 @@ def debug_cache(message):
         bbs.writeln("|08%s" % message)
 
 
+def current_user_id():
+    """Return Mystic's supported current-user ID, or None if unavailable."""
+    try:
+        user_id = bbs.getuserid()
+    except (AttributeError, TypeError, ValueError):
+        return None
+    if user_id is None or isinstance(user_id, bool):
+        return None
+    user_id = str(user_id).strip()
+    return user_id or None
+
+
+def favorites_directory():
+    """Resolve the configurable per-user favorites directory."""
+    if not isinstance(USER_DATA_DIR, str) or not USER_DATA_DIR:
+        raise ValueError("USER_DATA_DIR must be a non-empty path")
+    return os.path.join(os.path.abspath(USER_DATA_DIR), "favorites")
+
+
+def favorites_path(user_id):
+    """Return a hash-based filename that cannot contain user path syntax."""
+    key = hashlib.sha256(user_id.encode("utf-8")).hexdigest()
+    return os.path.join(favorites_directory(), key + ".json")
+
+
+def _load_favorites_state(user_id):
+    """Return (favorites, available) without exposing storage exceptions."""
+    try:
+        path = favorites_path(user_id)
+        if not os.path.exists(path):
+            return [], True
+        if os.path.getsize(path) > MAX_FAVORITES_BYTES:
+            raise ValueError("favorites file is too large")
+        with open(path, "r", encoding="utf-8") as stream:
+            payload = json.load(stream)
+        if not isinstance(payload, dict) or not isinstance(payload.get("favorites"), list):
+            raise ValueError("invalid favorites structure")
+        favorites = []
+        for item in payload["favorites"]:
+            if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+                continue
+            path_value = item["path"].strip()
+            if not path_value:
+                continue
+            favorite = {
+                "path": path_value,
+                "title": str(item.get("title", path_value)),
+                "description": str(item.get("description", "")),
+            }
+            if isinstance(item.get("added_at"), (int, float)):
+                favorite["added_at"] = item["added_at"]
+            favorites.append(favorite)
+        return favorites, True
+    except (OSError, TypeError, ValueError, UnicodeError) as exc:
+        debug_cache("Favorites unavailable: %r" % (exc,))
+        return [], False
+
+
+def load_favorites(user_id=None):
+    """Load the current user's favorites, safely returning an empty list."""
+    user_id = user_id or current_user_id()
+    if user_id is None:
+        return []
+    favorites, _ = _load_favorites_state(user_id)
+    return favorites
+
+
+def save_favorites(user_id, favorites):
+    """Atomically save one user's favorites, returning success status."""
+    temporary_path = None
+    try:
+        directory = favorites_directory()
+        path = favorites_path(user_id)
+        os.makedirs(directory, exist_ok=True)
+        payload = json.dumps({"favorites": favorites}, ensure_ascii=True,
+                             separators=(",", ":"))
+        if len(payload.encode("utf-8")) > MAX_FAVORITES_BYTES:
+            raise ValueError("favorites file is too large")
+        descriptor, temporary_path = tempfile.mkstemp(
+            prefix=".favorites-", suffix=".tmp", dir=directory
+        )
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_path, path)
+        temporary_path = None
+        return True
+    except (OSError, TypeError, ValueError, UnicodeError) as exc:
+        debug_cache("Favorites unavailable: %r" % (exc,))
+        return False
+    finally:
+        if temporary_path is not None:
+            try:
+                os.unlink(temporary_path)
+            except OSError:
+                pass
+
+
+def toggle_favorite(user_id, package):
+    """Toggle a package by canonical path; return added/removed or None."""
+    favorites, available = _load_favorites_state(user_id)
+    if not available:
+        return None
+    package_path = package.get("path") if isinstance(package, dict) else None
+    if not isinstance(package_path, str) or not package_path.strip():
+        return None
+    package_path = package_path.strip()
+    existing = next((item for item in favorites if item["path"] == package_path), None)
+    if existing is not None:
+        updated = [item for item in favorites if item["path"] != package_path]
+        return False if save_favorites(user_id, updated) else None
+    record = {
+        "path": package_path,
+        "title": str(package.get("title", package_path)),
+        "description": str(package.get("description", "")),
+        "added_at": time.time(),
+    }
+    return True if save_favorites(user_id, favorites + [record]) else None
+
+
+def remove_favorite(user_id, package_path):
+    """Remove one favorite by canonical path; return success status."""
+    favorites, available = _load_favorites_state(user_id)
+    if not available:
+        return None
+    updated = [item for item in favorites if item["path"] != package_path]
+    if len(updated) == len(favorites):
+        return False
+    return True if save_favorites(user_id, updated) else None
+
+
+def favorite_status(package):
+    """Return whether the current user has a package bookmarked."""
+    user_id = current_user_id()
+    if user_id is None:
+        return False
+    return any(item.get("path") == package.get("path") for item in load_favorites(user_id))
+
+
+def show_favorite_feedback(result):
+    """Show compact non-blocking favorite feedback."""
+    if result is True:
+        bbs.writeln("|10Added to favorites.")
+    elif result is False:
+        bbs.writeln("|10Removed from favorites.")
+    else:
+        bbs.writeln("|12Favorites are unavailable.")
+
+
 def line(char="-"):
     return char * 78
 
@@ -970,6 +1122,10 @@ def normalize_key(key):
         return "search"
     if isinstance(value, str) and value.upper() == "J":
         return "jump"
+    if isinstance(value, str) and value.upper() == "F":
+        return "favorite"
+    if isinstance(value, str) and value.upper() == "D":
+        return "delete"
     if isinstance(value, str) and value.upper() == "N":
         return "next"
     if isinstance(value, str) and value.upper() == "P":
@@ -982,6 +1138,8 @@ def normalize_menu_key(key):
     action = normalize_key(key)
     if key_value(key) in ("P", "p"):
         return "package_day"
+    if key_value(key) in ("F", "f"):
+        return "favorites"
     if action == "root":
         return "recent"
     if action == "unknown" and key_value(key) in ("A", "a"):
@@ -1051,14 +1209,22 @@ def read_readme(package_title, path):
 
         bbs.writeln("|08" + line("-"))
         bbs.writeln(
-            "|11Page %d/%d  |15[N]|07ext  |15[P]|07rev  |15[ESC/Q]|07 Back"
+            "|11Page %d/%d  |15[N]|07ext  |15[P]|07rev  |15[F]|07av  |15[ESC/Q]|07 Back"
             % (page + 1, page_count)
         )
-        action = normalize_key(bbs.onekey("NPQ" + ESC, False))
+        action = normalize_key(bbs.onekey("NPFQ" + ESC, False))
         if action == "next" and page < page_count - 1:
             page += 1
         elif action == "previous" and page > 0:
             page -= 1
+        elif action == "favorite":
+            user_id = current_user_id()
+            if user_id is None:
+                show_favorite_feedback(None)
+            else:
+                show_favorite_feedback(toggle_favorite(
+                    user_id, {"title": package_title, "path": path}
+                ))
         elif action == "quit":
             return
 
@@ -1085,7 +1251,7 @@ def category_display(item):
 
 
 def render_lightbar(items, selected_index, viewport_start, title="Recent uploads",
-                    formatter=None, controls="Up/Down Move   Enter Read   ESC/Q Back"):
+                    formatter=None, controls="Up/Down Move   Enter Read   F Fav   ESC/Q Back"):
     heading(title)
     formatter = formatter or (lambda item: item.get("title", ""))
     visible_end = min(viewport_start + VISIBLE_RESULT_ROWS, len(items))
@@ -1103,7 +1269,7 @@ def render_lightbar(items, selected_index, viewport_start, title="Recent uploads
 
 
 def choose_result_lightbar(items, title="Recent uploads", formatter=None,
-                           controls="Up/Down Move   Enter Read   ESC/Q Back",
+                           controls="Up/Down Move   Enter Read   F Fav   ESC/Q Back",
                            extra_actions=()):
     """Select an item using Mystic's native extended-key input."""
     selected_index = 0
@@ -1118,6 +1284,16 @@ def choose_result_lightbar(items, title="Recent uploads", formatter=None,
             return items[selected_index]
         if action == "quit":
             return None
+        if action == "delete" and action in extra_actions:
+            return ("delete", items[selected_index])
+        if action == "favorite" and action in extra_actions:
+            item = items[selected_index]
+            if item.get("kind") != "category":
+                user_id = current_user_id()
+                show_favorite_feedback(
+                    None if user_id is None else toggle_favorite(user_id, item)
+                )
+            continue
         if action in extra_actions:
             return action
 
@@ -1172,7 +1348,11 @@ def choose_result_numbered(items):
 def choose_recent_result(items):
     """Dispatch parsed recent items to the configured result selector."""
     if selector_mode() == "lightbar":
-        return choose_result_lightbar(items)
+        return choose_result_lightbar(
+            items,
+            controls="Up/Down Move   Enter Read   F Fav   ESC/Q Back",
+            extra_actions=("favorite",),
+        )
     return choose_result_numbered(items)
 
 
@@ -1206,7 +1386,7 @@ def render_package_of_day(item):
             bbs.writeln("|07" + text_line)
     bbs.writeln("")
     bbs.writeln("|08" + line("-"))
-    bbs.writeln("|15[ENTER]|07 Read README   |15[R]|07 Another package   |15[ESC/Q]|07 Back")
+    bbs.writeln("|15[ENTER]|07 Read   |15[F]|07 Favorite   |15[R]|07 Another   |15[ESC/Q]|07 Back")
 
 
 def show_package_of_day():
@@ -1228,9 +1408,14 @@ def show_package_of_day():
     selected_index = candidates.index(selected)
     while True:
         render_package_of_day(selected)
-        action = normalize_key(bbs.onekey("R" + chr(13) + ESC, False))
+        action = normalize_key(bbs.onekey("RF" + chr(13) + ESC, False))
         if action == "enter":
             read_readme(selected.get("title", selected["path"]), selected["path"])
+        elif action == "favorite":
+            user_id = current_user_id()
+            show_favorite_feedback(
+                None if user_id is None else toggle_favorite(user_id, selected)
+            )
         elif action == "root":
             if len(candidates) > 1:
                 selected_index = (selected_index + 1) % len(candidates)
@@ -1247,8 +1432,8 @@ def choose_browse_entry(items, path):
         items,
         title=title,
         formatter=formatter,
-        controls="Up/Down Move  Enter Open  B Back  R Root  J Jump  ESC/Q Exit",
-        extra_actions=("back", "root", "jump"),
+        controls="Up/Down Move  Enter Open  B Back  R Root  J Jump  F Fav  ESC/Q Exit",
+        extra_actions=("back", "root", "jump", "favorite"),
     )
 
 
@@ -1361,13 +1546,73 @@ def search():
             items,
             title="Search: " + query,
             formatter=package_display,
-            controls="Up/Down Move   Enter Read   S Search   ESC/Q Back",
-            extra_actions=("search",),
+            controls="Up/Down Move   Enter Read   S Search   F Fav   ESC/Q Back",
+            extra_actions=("search", "favorite"),
         )
         if selected == "search":
             continue
         if selected is not None:
             read_readme(selected["title"], selected["path"])
+
+
+def favorite_display(item):
+    """Format a favorite for the 80-column lightbar."""
+    title = terminal_text(item.get("title", item.get("path", "")))
+    path = terminal_text(item.get("path", ""))
+    return title + ("  " + path if path else "")
+
+
+def show_empty_favorites():
+    """Display the non-error empty Favorites state."""
+    heading("Favorites")
+    bbs.writeln("|07No favorite Aminet packages yet.")
+    bbs.writeln("")
+    bbs.writeln("|07Press F while viewing a package to bookmark it.")
+    bbs.writeln("")
+    bbs.writeln("|08ESC/Q Back")
+    bbs.onekey("FQ" + ESC, False)
+
+
+def show_favorites():
+    """Display and manage the current Mystic user's local favorites."""
+    user_id = current_user_id()
+    if user_id is None:
+        show_error("Favorites are unavailable.")
+        return
+    favorites, available = _load_favorites_state(user_id)
+    if not available:
+        show_error("Favorites are unavailable.")
+        return
+    if not favorites:
+        show_empty_favorites()
+        return
+
+    while True:
+        selected = choose_result_lightbar(
+            favorites,
+            title="Favorites",
+            formatter=favorite_display,
+            controls="Up/Down Move   Enter Read   D Delete   ESC/Q Back",
+            extra_actions=("delete",),
+        )
+        if selected is None:
+            return
+        if isinstance(selected, tuple) and selected[0] == "delete":
+            result = remove_favorite(user_id, selected[1].get("path", ""))
+            if result is None:
+                show_error("Favorites are unavailable.")
+                return
+            if result:
+                show_favorite_feedback(False)
+            favorites, available = _load_favorites_state(user_id)
+            if not available:
+                show_error("Favorites are unavailable.")
+                return
+            if not favorites:
+                show_empty_favorites()
+                return
+            continue
+        read_readme(selected.get("title", selected["path"]), selected["path"])
 
 
 def about():
@@ -1397,12 +1642,13 @@ def main():
         bbs.writeln("|15 [B]|07 Browse Aminet")
         bbs.writeln("|15 [S]|07 Search Aminet")
         bbs.writeln("|15 [P]|07 Package of the Day")
+        bbs.writeln("|15 [F]|07 Favorites")
         bbs.writeln("|15 [A]|07 About")
         bbs.writeln("|15 [Q]|07 Return to BBS")
         bbs.writeln("")
         bbs.writeln("|08ESCAPE returns to BBS")
         bbs.write("|11Select: |15")
-        action = normalize_menu_key(bbs.onekey("RBSPAQ" + ESC, True))
+        action = normalize_menu_key(bbs.onekey("RBSPFAQ" + ESC, True))
 
         if action == "quit":
             clear_screen()
@@ -1417,6 +1663,8 @@ def main():
             search()
         elif action == "package_day":
             show_package_of_day()
+        elif action == "favorites":
+            show_favorites()
 
 
 if __name__ == "__main__":

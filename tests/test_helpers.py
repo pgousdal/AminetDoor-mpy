@@ -22,6 +22,7 @@ stub.write = lambda *args, **kwargs: None
 stub.writeln = lambda *args, **kwargs: None
 stub.getkey = lambda *args, **kwargs: ("Q", False)
 stub.onekey = lambda *args, **kwargs: "Q"
+stub.getuserid = lambda: 1
 sys.modules["mystic_bbs"] = stub
 
 SCRIPT = pathlib.Path(__file__).resolve().parents[1] / "aminetdoor.mpy"
@@ -601,6 +602,106 @@ class CacheTests(unittest.TestCase):
         self.assertEqual(list(cache_path.parent.glob("*.tmp")), [])
 
 
+class FavoriteTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.data_patch = mock.patch.object(aminetdoor, "USER_DATA_DIR",
+                                            self.temp_dir.name)
+        self.data_patch.start()
+        self.addCleanup(self.data_patch.stop)
+        self.user_patch = mock.patch.object(aminetdoor.bbs, "getuserid",
+                                            return_value=7)
+        self.user_patch.start()
+        self.addCleanup(self.user_patch.stop)
+        self.package = {
+            "title": "ADoom.lha",
+            "path": "game/shoot/ADoom",
+            "description": "Amiga DOOM",
+        }
+
+    def test_supported_mystic_user_id_is_used_and_hashed(self):
+        self.assertEqual(aminetdoor.current_user_id(), "7")
+        path = pathlib.Path(aminetdoor.favorites_path("../user/7"))
+        self.assertEqual(path.parent.name, "favorites")
+        self.assertRegex(path.name, r"^[0-9a-f]{64}\.json$")
+
+    def test_toggle_add_duplicate_and_remove(self):
+        user_id = aminetdoor.current_user_id()
+        self.assertTrue(aminetdoor.toggle_favorite(user_id, self.package))
+        self.assertFalse(aminetdoor.toggle_favorite(user_id, self.package))
+        self.assertEqual(aminetdoor.load_favorites(user_id), [])
+
+    def test_save_load_round_trip_and_per_user_isolation(self):
+        self.assertTrue(aminetdoor.toggle_favorite("user-a", self.package))
+        self.assertEqual(aminetdoor.load_favorites("user-a")[0]["path"],
+                         self.package["path"])
+        self.assertEqual(aminetdoor.load_favorites("user-b"), [])
+
+    def test_corrupt_favorites_are_safe_and_not_overwritten(self):
+        user_id = aminetdoor.current_user_id()
+        path = pathlib.Path(aminetdoor.favorites_path(user_id))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{not json", encoding="utf-8")
+        self.assertEqual(aminetdoor.load_favorites(user_id), [])
+        self.assertIsNone(aminetdoor.toggle_favorite(user_id, self.package))
+        self.assertEqual(path.read_text(encoding="utf-8"), "{not json")
+
+    def test_atomic_favorite_write(self):
+        with mock.patch.object(aminetdoor.os, "replace",
+                               wraps=aminetdoor.os.replace) as replace:
+            self.assertTrue(aminetdoor.save_favorites("user-a", [self.package]))
+        replace.assert_called_once()
+        temporary_path, final_path = replace.call_args.args
+        self.assertEqual(os.path.dirname(temporary_path),
+                         os.path.dirname(final_path))
+        self.assertEqual(aminetdoor.load_favorites("user-a")[0]["path"],
+                         self.package["path"])
+
+    def test_storage_failure_is_nonfatal(self):
+        with mock.patch.object(aminetdoor.os, "makedirs",
+                               side_effect=PermissionError("denied")):
+            self.assertFalse(aminetdoor.save_favorites("user-a", [self.package]))
+            self.assertIsNone(aminetdoor.toggle_favorite("user-a", self.package))
+
+    def test_lightbar_f_toggles_without_changing_selection_flow(self):
+        items = [dict(self.package)]
+        with mock.patch.object(aminetdoor, "render_lightbar"), \
+                mock.patch.object(aminetdoor.bbs, "getkey",
+                                  side_effect=[("F", False), ("\r", False)]):
+            selected = aminetdoor.choose_result_lightbar(
+                items, extra_actions=("favorite",))
+        self.assertEqual(selected, items[0])
+        self.assertEqual(aminetdoor.load_favorites("7")[0]["path"],
+                         self.package["path"])
+
+    def test_favorite_readme_uses_existing_reader(self):
+        with mock.patch.object(aminetdoor, "fetch_readme", return_value="README"), \
+                mock.patch.object(aminetdoor.bbs, "onekey",
+                                  side_effect=["F", aminetdoor.ESC]):
+            aminetdoor.read_readme(self.package["title"], self.package["path"])
+        self.assertEqual(aminetdoor.load_favorites("7")[0]["path"],
+                         self.package["path"])
+
+    def test_favorites_screen_deletes_without_network(self):
+        user_id = aminetdoor.current_user_id()
+        self.assertTrue(aminetdoor.save_favorites(user_id, [self.package]))
+        with mock.patch.object(
+                aminetdoor, "choose_result_lightbar",
+                return_value=("delete", self.package)):
+            aminetdoor.show_favorites()
+        self.assertEqual(aminetdoor.load_favorites(user_id), [])
+
+    def test_favorites_screen_enter_uses_existing_reader(self):
+        user_id = aminetdoor.current_user_id()
+        self.assertTrue(aminetdoor.save_favorites(user_id, [self.package]))
+        with mock.patch.object(aminetdoor, "choose_result_lightbar",
+                               side_effect=[self.package, None]), \
+                mock.patch.object(aminetdoor, "read_readme") as read_readme:
+            aminetdoor.show_favorites()
+        read_readme.assert_called_once_with(self.package["title"], self.package["path"])
+
+
 class ArchitectureTests(unittest.TestCase):
     def test_filter_configuration(self):
         self.assertIsNone(aminetdoor.normalize_architecture_filter(None))
@@ -711,7 +812,11 @@ class SelectorTests(unittest.TestCase):
                 mock.patch.object(aminetdoor, "choose_result_lightbar", return_value=self.items[0]) as lightbar, \
                 mock.patch.object(aminetdoor, "choose_result_numbered") as numbered:
             self.assertIs(aminetdoor.choose_recent_result(self.items), self.items[0])
-            lightbar.assert_called_once_with(self.items)
+            lightbar.assert_called_once_with(
+                self.items,
+                controls="Up/Down Move   Enter Read   F Fav   ESC/Q Back",
+                extra_actions=("favorite",),
+            )
             numbered.assert_not_called()
 
         with mock.patch.object(aminetdoor, "RESULT_SELECTOR", "numbered"), \
