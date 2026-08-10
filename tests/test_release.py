@@ -26,6 +26,21 @@ class ReleaseMetadataTests(unittest.TestCase):
             errors = release_check.check_metadata(pathlib.Path(directory))
         self.assertIn("missing required file: aminetdoor.mpy", errors)
 
+    def test_release_check_rejects_stale_rendered_header(self):
+        source = (ROOT / "aminetdoor.mpy").read_text(encoding="utf-8")
+        source = source.replace(
+            'return "|11 AminetDoor |07v%s  |08-  Aminet from your BBS" % VERSION',
+            'return "|11 AminetDoor |07v0.1.0  |08-  Aminet from your BBS"')
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            for relative_path in release_check.REQUIRED_FILES:
+                path = root / relative_path
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("1.0.0", encoding="utf-8")
+            (root / "aminetdoor.mpy").write_text(source, encoding="utf-8")
+            errors = release_check.check_metadata(root)
+        self.assertIn("main-menu header does not render v1.0.0", errors)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

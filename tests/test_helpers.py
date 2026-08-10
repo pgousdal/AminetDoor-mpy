@@ -113,6 +113,24 @@ SAMPLE_ARCH_SEARCH = """
 
 
 class HelperTests(unittest.TestCase):
+    def test_heading_renders_canonical_version(self):
+        output = []
+        with mock.patch.object(aminetdoor.bbs, "write", side_effect=output.append), \
+                mock.patch.object(aminetdoor.bbs, "writeln", side_effect=output.append):
+            aminetdoor.heading("Main menu")
+        rendered = "\n".join(output)
+        self.assertIn("AminetDoor |07v%s" % aminetdoor.VERSION, rendered)
+        self.assertIn("AminetDoor |07v1.0.0", rendered)
+
+    def test_about_uses_canonical_version_heading(self):
+        output = []
+        with mock.patch.object(aminetdoor.bbs, "write", side_effect=output.append), \
+                mock.patch.object(aminetdoor.bbs, "writeln", side_effect=output.append), \
+                mock.patch.object(aminetdoor, "pause"):
+            aminetdoor.about()
+        self.assertIn("AminetDoor |07v%s" % aminetdoor.VERSION,
+                      "\n".join(output))
+
     def test_common_punctuation_is_normalized(self):
         value = aminetdoor.terminal_text("\u201cAmiga\u201d \u2014 it\u2019s nice\u2026")
         self.assertEqual(value, '"Amiga" -- it\'s nice...')

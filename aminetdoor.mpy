@@ -1040,10 +1040,15 @@ def clear_screen():
     bbs.write("|CL")
 
 
+def door_banner():
+    """Return the shared runtime banner derived from the canonical version."""
+    return "|11 AminetDoor |07v%s  |08-  Aminet from your BBS" % VERSION
+
+
 def heading(title):
     clear_screen()
     bbs.writeln("|15" + line("="))
-    bbs.writeln("|11 AminetDoor |07v%s  |08-  Aminet from your BBS" % VERSION)
+    bbs.writeln(door_banner())
     bbs.writeln("|15" + line("="))
     if title:
         safe = terminal_text(title)

@@ -3,6 +3,8 @@
 """Developer-only connectivity probe using AminetDoor's urllib settings."""
 
 import os
+from pathlib import Path
+import re
 import ssl
 import sys
 import urllib.error
@@ -11,7 +13,20 @@ import urllib.request
 
 TIMEOUT = 10
 MAX_RESPONSE_BYTES = 250000
-USER_AGENT = "AminetDoor/1.0.0 (Mystic BBS door; https://github.com/pgousdal/AminetDoor-mpy)"
+
+
+def project_version():
+    """Read the door's canonical runtime version without importing Mystic."""
+    source = (Path(__file__).resolve().parent.parent / "aminetdoor.mpy").read_text(
+        encoding="utf-8")
+    match = re.search(r'^VERSION = "([^"]+)"$', source, re.MULTILINE)
+    if not match:
+        raise RuntimeError("aminetdoor.mpy has no canonical VERSION assignment")
+    return match.group(1)
+
+
+VERSION = project_version()
+USER_AGENT = "AminetDoor/%s (Mystic BBS door; https://github.com/pgousdal/AminetDoor-mpy)" % VERSION
 CA_BUNDLE_CANDIDATES = (
     "/etc/ssl/certs/ca-certificates.crt",
     "/etc/pki/tls/certs/ca-bundle.crt",

@@ -3,10 +3,13 @@
 
 import argparse
 import compileall
+import importlib.machinery
+import importlib.util
 from pathlib import Path
 import re
 import subprocess
 import sys
+import types
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -25,6 +28,31 @@ REQUIRED_FILES = (
 )
 
 
+def load_door(source_path):
+    """Load the door with a minimal Mystic stub for runtime validation."""
+    output = []
+    stub = types.ModuleType("mystic_bbs")
+    stub.write = lambda value="": output.append(value)
+    stub.writeln = lambda value="": output.append(value)
+    stub.getuser = lambda number: {"number": 1, "name": "release-check"}
+    stub.getkey = lambda *args, **kwargs: ("Q", False)
+    stub.onekey = lambda *args, **kwargs: "Q"
+    previous = sys.modules.get("mystic_bbs")
+    sys.modules["mystic_bbs"] = stub
+    try:
+        loader = importlib.machinery.SourceFileLoader(
+            "aminetdoor_release_check", str(source_path))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        door = importlib.util.module_from_spec(spec)
+        loader.exec_module(door)
+    finally:
+        if previous is None:
+            del sys.modules["mystic_bbs"]
+        else:
+            sys.modules["mystic_bbs"] = previous
+    return door, output
+
+
 def check_metadata(root=ROOT):
     """Return human-readable metadata errors without modifying the tree."""
     errors = []
@@ -41,6 +69,26 @@ def check_metadata(root=ROOT):
         elif match.group(1) != EXPECTED_VERSION:
             errors.append("runtime version is %s, expected %s" %
                           (match.group(1), EXPECTED_VERSION))
+        try:
+            door, output = load_door(source_path)
+            door.heading("Main menu")
+            rendered = "\n".join(output)
+            expected_banner = "AminetDoor |07v%s" % EXPECTED_VERSION
+            if expected_banner not in rendered:
+                errors.append("main-menu header does not render v%s" %
+                              EXPECTED_VERSION)
+            output[:] = []
+            door.about()
+            if expected_banner not in "\n".join(output):
+                errors.append("About header does not render v%s" %
+                              EXPECTED_VERSION)
+            if door.USER_AGENT != (
+                    "AminetDoor/%s (Mystic BBS door; "
+                    "https://github.com/pgousdal/AminetDoor-mpy)" %
+                    EXPECTED_VERSION):
+                errors.append("runtime User-Agent version is inconsistent")
+        except Exception as exc:
+            errors.append("could not validate runtime version surfaces: %s" % exc)
 
     for relative_path in ("README.md", "CHANGELOG.md"):
         path = root / relative_path
@@ -51,8 +99,8 @@ def check_metadata(root=ROOT):
     diagnostic = root / "scripts/check_aminet.py"
     if diagnostic.is_file():
         text = diagnostic.read_text(encoding="utf-8")
-        if "AminetDoor/%s" % EXPECTED_VERSION not in text:
-            errors.append("diagnostic User-Agent version is inconsistent")
+        if 'USER_AGENT = "AminetDoor/%s' not in text or "% VERSION" not in text:
+            errors.append("diagnostic User-Agent does not derive from VERSION")
 
     for relative_path in ("README.md", "docs/INSTALL.md", "docs/M1.md"):
         path = root / relative_path
