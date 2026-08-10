@@ -24,7 +24,7 @@ import xml.etree.ElementTree as ET
 
 import mystic_bbs as bbs
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 ESC = "\x1b"
 # Mystic returns this byte for Escape in the live-tested getkey()/onekey APIs.
 FEED_URL = "https://aminet.net/feed"

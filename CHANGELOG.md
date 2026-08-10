@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.1 — Version Reporting Fix
+
+- Fixed stale version reporting in the live Mystic door banner; the main menu
+  and About header now use the canonical runtime version source.
+- Removed duplicated version metadata from diagnostic tooling and strengthened
+  release validation to exercise the rendered headers and runtime User-Agent.
+- Added regression coverage that rejects stale hardcoded version banners.
+- This patch release contains no new product features.
+
 ## 1.0.0 — M1.7 Release Readiness
 
 - Aligned user, installation, licensing, and milestone documentation with the

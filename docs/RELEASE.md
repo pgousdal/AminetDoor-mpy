@@ -1,6 +1,6 @@
 # Release checklist
 
-Use this checklist for AminetDoor v1.0.0. Publishing remains a manual SysOp or
+Use this checklist for AminetDoor v1.0.1. Publishing remains a manual SysOp or
 maintainer action; the release checker does not use credentials or modify
 GitHub.
 
@@ -17,8 +17,8 @@ GitHub.
 - [ ] Exercise a transient network failure and verify bounded retries, friendly
   errors, and stale README fallback where cached content exists.
 - [ ] Verify ESC/Q cleanly exits each interactive context and returns to Mystic.
-- [ ] Verify the About/runtime display reports v1.0.0.
+- [ ] Verify the About/runtime display reports v1.0.1.
 - [ ] Update and review `CHANGELOG.md`.
 - [ ] Commit the final release changes.
-- [ ] Create the annotated tag: `git tag -a v1.0.0 -m "AminetDoor v1.0.0"`.
+- [ ] Create the annotated tag: `git tag -a v1.0.1 -m "AminetDoor v1.0.1"`.
 - [ ] Push the commit and tag, then create the GitHub release manually.

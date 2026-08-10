@@ -120,7 +120,7 @@ class HelperTests(unittest.TestCase):
             aminetdoor.heading("Main menu")
         rendered = "\n".join(output)
         self.assertIn("AminetDoor |07v%s" % aminetdoor.VERSION, rendered)
-        self.assertIn("AminetDoor |07v1.0.0", rendered)
+        self.assertIn("AminetDoor |07v1.0.1", rendered)
 
     def test_about_uses_canonical_version_heading(self):
         output = []

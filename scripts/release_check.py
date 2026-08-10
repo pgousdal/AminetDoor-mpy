@@ -13,7 +13,7 @@ import types
 
 
 ROOT = Path(__file__).resolve().parent.parent
-EXPECTED_VERSION = "1.0.0"
+EXPECTED_VERSION = "1.0.1"
 REQUIRED_FILES = (
     "aminetdoor.mpy",
     "README.md",

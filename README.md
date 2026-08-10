@@ -1,6 +1,6 @@
 # AminetDoor
 
-AminetDoor v1.0.0 is a read-only Aminet browser and search door for Mystic
+AminetDoor v1.0.1 is a read-only Aminet browser and search door for Mystic
 BBS. It is a single Python 3 `.mpy` script, uses only the Python standard
 library, and has been validated in a live Mystic BBS installation.
 
@@ -82,9 +82,9 @@ package listings and metadata remain live.
 
 ## Validation and release status
 
-Version 1.0.0 represents the first stable release. Automated tests are
-offline and mock network calls; the door has also been operated successfully
-under Mystic BBS. Run the complete release gate with:
+Version 1.0.1 is the current patch release; version 1.0.0 was the first stable
+release. Automated tests are offline and mock network calls; the door has also
+been operated successfully under Mystic BBS. Run the complete release gate with:
 
 ```bash
 python3 scripts/release_check.py
