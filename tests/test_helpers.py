@@ -22,7 +22,7 @@ stub.write = lambda *args, **kwargs: None
 stub.writeln = lambda *args, **kwargs: None
 stub.getkey = lambda *args, **kwargs: ("Q", False)
 stub.onekey = lambda *args, **kwargs: "Q"
-stub.getuserid = lambda: 1
+stub.getuser = lambda number: {"number": 1, "name": "testuser"}
 sys.modules["mystic_bbs"] = stub
 
 SCRIPT = pathlib.Path(__file__).resolve().parents[1] / "aminetdoor.mpy"
@@ -610,8 +610,9 @@ class FavoriteTests(unittest.TestCase):
                                             self.temp_dir.name)
         self.data_patch.start()
         self.addCleanup(self.data_patch.stop)
-        self.user_patch = mock.patch.object(aminetdoor.bbs, "getuserid",
-                                            return_value=7)
+        self.user_patch = mock.patch.object(
+            aminetdoor.bbs, "getuser", return_value={"number": 7, "name": "testuser"}
+        )
         self.user_patch.start()
         self.addCleanup(self.user_patch.stop)
         self.package = {
@@ -621,13 +622,30 @@ class FavoriteTests(unittest.TestCase):
         }
 
     def test_supported_mystic_user_id_is_used_and_hashed(self):
-        self.assertEqual(aminetdoor.current_user_id(), "7")
+        self.assertEqual(aminetdoor.current_user_identity(), "7")
         path = pathlib.Path(aminetdoor.favorites_path("../user/7"))
         self.assertEqual(path.parent.name, "favorites")
         self.assertRegex(path.name, r"^[0-9a-f]{64}\.json$")
 
+    def test_broken_getuser_fails_open_without_crashing(self):
+        with mock.patch.object(aminetdoor.bbs, "getuser",
+                               side_effect=RuntimeError(
+                                   "returned a result with an exception set")):
+            self.assertIsNone(aminetdoor.current_user_identity())
+            self.assertIsNone(aminetdoor.toggle_favorite(None, self.package))
+            with mock.patch.object(aminetdoor, "show_error") as show_error:
+                aminetdoor.show_favorites()
+        show_error.assert_called_once_with("Favorites are unavailable.")
+
+    def test_guest_identity_does_not_share_persistent_favorites(self):
+        with mock.patch.object(aminetdoor.bbs, "getuser",
+                               return_value={"number": 0, "name": "Guest"}):
+            self.assertIsNone(aminetdoor.current_user_identity())
+            self.assertEqual(aminetdoor.load_favorites(), [])
+            self.assertIsNone(aminetdoor.toggle_favorite(None, self.package))
+
     def test_toggle_add_duplicate_and_remove(self):
-        user_id = aminetdoor.current_user_id()
+        user_id = aminetdoor.current_user_identity()
         self.assertTrue(aminetdoor.toggle_favorite(user_id, self.package))
         self.assertFalse(aminetdoor.toggle_favorite(user_id, self.package))
         self.assertEqual(aminetdoor.load_favorites(user_id), [])
@@ -639,7 +657,7 @@ class FavoriteTests(unittest.TestCase):
         self.assertEqual(aminetdoor.load_favorites("user-b"), [])
 
     def test_corrupt_favorites_are_safe_and_not_overwritten(self):
-        user_id = aminetdoor.current_user_id()
+        user_id = aminetdoor.current_user_identity()
         path = pathlib.Path(aminetdoor.favorites_path(user_id))
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{not json", encoding="utf-8")
@@ -684,7 +702,7 @@ class FavoriteTests(unittest.TestCase):
                          self.package["path"])
 
     def test_favorites_screen_deletes_without_network(self):
-        user_id = aminetdoor.current_user_id()
+        user_id = aminetdoor.current_user_identity()
         self.assertTrue(aminetdoor.save_favorites(user_id, [self.package]))
         with mock.patch.object(
                 aminetdoor, "choose_result_lightbar",
@@ -693,7 +711,7 @@ class FavoriteTests(unittest.TestCase):
         self.assertEqual(aminetdoor.load_favorites(user_id), [])
 
     def test_favorites_screen_enter_uses_existing_reader(self):
-        user_id = aminetdoor.current_user_id()
+        user_id = aminetdoor.current_user_identity()
         self.assertTrue(aminetdoor.save_favorites(user_id, [self.package]))
         with mock.patch.object(aminetdoor, "choose_result_lightbar",
                                side_effect=[self.package, None]), \

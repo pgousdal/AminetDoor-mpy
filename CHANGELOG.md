@@ -9,7 +9,7 @@
 
 - Added per-user local JSON bookmarks with atomic writes and Favorites lightbar
   management.
-- Favorites use Mystic's `getuserid()` identity and fail open on storage errors.
+- Favorites use Mystic's `getuser(0)` identity and fail open on storage errors.
 
 ## M1.3 Quick Path
 

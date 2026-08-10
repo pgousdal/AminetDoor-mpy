@@ -23,8 +23,8 @@ AminetDoor is a small Mystic BBS Python 3 door for browsing Aminet.
   executable content.
 - Favorites are per-user local JSON data; storage failure must never disable
   core Browse, Search, Recent, or README functionality.
-- Use Mystic's supported `bbs.getuserid()` for per-user identity; do not guess
-  user fields or write arbitrary data into Mystic's native user record.
+- Use Mystic's documented `bbs.getuser(0)` record for per-user identity; do not
+  guess user fields or write arbitrary data into Mystic's native user record.
 - Architecture filtering is SysOp configuration in `aminetdoor.mpy`; it must
   use verified Aminet metadata or form fields, not filename inference.
 - The inline Aminet category catalog is navigation-only; package listings must

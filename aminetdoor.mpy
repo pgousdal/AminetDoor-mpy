@@ -870,16 +870,32 @@ def debug_cache(message):
         bbs.writeln("|08%s" % message)
 
 
-def current_user_id():
-    """Return Mystic's supported current-user ID, or None if unavailable."""
+def current_user_identity():
+    """Return a stable identity from Mystic's documented getuser(0) record."""
     try:
-        user_id = bbs.getuserid()
-    except (AttributeError, TypeError, ValueError):
+        user = bbs.getuser(0)
+    except Exception as exc:
+        debug_user_identity("getuser(0) failed: %r" % (exc,))
         return None
-    if user_id is None or isinstance(user_id, bool):
+    if not isinstance(user, dict):
+        debug_user_identity("getuser(0) returned %s" % type(user).__name__)
         return None
-    user_id = str(user_id).strip()
-    return user_id or None
+    for field in ("number", "id", "userid", "user_id", "name", "username", "handle"):
+        value = user.get(field)
+        if value is None or isinstance(value, bool):
+            continue
+        value = str(value).strip()
+        if value and value.casefold() not in ("guest", "anonymous") and value != "0":
+            return value
+    debug_user_identity("getuser(0) keys: %s" % ", ".join(sorted(str(key) for key in user)))
+    debug_user_identity("getuser(0) had no safe identity field")
+    return None
+
+
+def debug_user_identity(message):
+    """Log only safe identity diagnostics in developer mode."""
+    if DEBUG_NETWORK:
+        bbs.writeln("|08Mystic user diagnostic: %s" % message)
 
 
 def favorites_directory():
@@ -897,6 +913,8 @@ def favorites_path(user_id):
 
 def _load_favorites_state(user_id):
     """Return (favorites, available) without exposing storage exceptions."""
+    if not isinstance(user_id, str) or not user_id:
+        return [], False
     try:
         path = favorites_path(user_id)
         if not os.path.exists(path):
@@ -930,7 +948,7 @@ def _load_favorites_state(user_id):
 
 def load_favorites(user_id=None):
     """Load the current user's favorites, safely returning an empty list."""
-    user_id = user_id or current_user_id()
+    user_id = user_id or current_user_identity()
     if user_id is None:
         return []
     favorites, _ = _load_favorites_state(user_id)
@@ -1004,7 +1022,7 @@ def remove_favorite(user_id, package_path):
 
 def favorite_status(package):
     """Return whether the current user has a package bookmarked."""
-    user_id = current_user_id()
+    user_id = current_user_identity()
     if user_id is None:
         return False
     return any(item.get("path") == package.get("path") for item in load_favorites(user_id))
@@ -1218,7 +1236,7 @@ def read_readme(package_title, path):
         elif action == "previous" and page > 0:
             page -= 1
         elif action == "favorite":
-            user_id = current_user_id()
+            user_id = current_user_identity()
             if user_id is None:
                 show_favorite_feedback(None)
             else:
@@ -1289,7 +1307,7 @@ def choose_result_lightbar(items, title="Recent uploads", formatter=None,
         if action == "favorite" and action in extra_actions:
             item = items[selected_index]
             if item.get("kind") != "category":
-                user_id = current_user_id()
+                user_id = current_user_identity()
                 show_favorite_feedback(
                     None if user_id is None else toggle_favorite(user_id, item)
                 )
@@ -1412,7 +1430,7 @@ def show_package_of_day():
         if action == "enter":
             read_readme(selected.get("title", selected["path"]), selected["path"])
         elif action == "favorite":
-            user_id = current_user_id()
+            user_id = current_user_identity()
             show_favorite_feedback(
                 None if user_id is None else toggle_favorite(user_id, selected)
             )
@@ -1575,7 +1593,7 @@ def show_empty_favorites():
 
 def show_favorites():
     """Display and manage the current Mystic user's local favorites."""
-    user_id = current_user_id()
+    user_id = current_user_identity()
     if user_id is None:
         show_error("Favorites are unavailable.")
         return
