@@ -11,7 +11,7 @@ import urllib.request
 
 TIMEOUT = 10
 MAX_RESPONSE_BYTES = 250000
-USER_AGENT = "AminetDoor/0.1.0 (Mystic BBS door; https://github.com/pgousdal/AminetDoor-mpy)"
+USER_AGENT = "AminetDoor/1.0.0 (Mystic BBS door; https://github.com/pgousdal/AminetDoor-mpy)"
 CA_BUNDLE_CANDIDATES = (
     "/etc/ssl/certs/ca-certificates.crt",
     "/etc/pki/tls/certs/ca-bundle.crt",

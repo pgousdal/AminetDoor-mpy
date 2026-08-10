@@ -1,200 +1,100 @@
 # AminetDoor
 
-**AminetDoor M0.2 / v0.1.0** is a small Aminet reader written as a Mystic BBS
-Python 3 (`.mpy`) script.
+AminetDoor v1.0.0 is a read-only Aminet browser and search door for Mystic
+BBS. It is a single Python 3 `.mpy` script, uses only the Python standard
+library, and has been validated in a live Mystic BBS installation.
 
 ## Features
 
-- Recent Aminet uploads, fetched from Aminet's RSS feed
-- Browse Aminet's category hierarchy and package listings
-- Search Aminet by package name or keyword
-- Architecture-aware Browse and Search, defaulting to 68k AmigaOS + generic
-- Local README cache with 24-hour freshness and stale-on-transient fallback
-- Lightbar selection from the recent-uploads list
-- Numbered selection compatibility mode
-- Paged, terminal-friendly README reader (76-column wrapping, 16-line pages)
-- Next / previous page navigation
-- Graceful HTTP/feed/decoding error messages
-- 10-second network timeout
-- No API key
-- No third-party Python packages
+- Recent uploads from Aminet's RSS feed
+- Category Browse that remains navigable without Aminet's `/tree` page
+- Keyword Search and SysOp-configured architecture filtering for Browse/Search
+- Deterministic Package of the Day drawn from the current Recent feed
+- Per-user Favorites based on Mystic's documented `bbs.getuser(0)` identity
+- Paged package description/README viewing for an 80x25 terminal
+- Bounded local JSON caching of README text, with stale-cache fallback for
+  transient network failures
+- Classified network errors, finite 10-second request timeouts, bounded reads,
+  and two retries for HTTP 502/503/504 responses
 
-## Requirements
+## Requirements and installation
 
-- Mystic BBS with embedded Python 3 configured
-- Internet access to `https://aminet.net`
-- Python standard library with HTTPS support
+AminetDoor requires Mystic BBS with embedded Python 3.6 or newer and
+standard-library HTTPS support. It has no third-party Python dependencies.
 
-Mystic's Python module is imported as:
-
-```python
-import mystic_bbs as bbs
-```
-
-## Quick install
-
-Copy:
-
-```text
-aminetdoor.mpy
-```
-
-to your Mystic theme's script directory, or the default script directory.
-
-Create a Mystic menu entry:
+Copy `aminetdoor.mpy` to the active Mystic theme's script directory or
+Mystic's default script directory, then add this menu command:
 
 ```text
 Command: GZ
 Data:    aminetdoor
 ```
 
-`GZ` executes a Python 3 Mystic script. Mystic will add `.mpy` when the
-extension is omitted.
+Mystic supplies the `mystic_bbs` module and resolves the omitted `.mpy`
+extension. See [docs/INSTALL.md](docs/INSTALL.md) for deployment and
+troubleshooting details.
 
-See `docs/INSTALL.md` for more detail.
+## Configuration
 
-## Controls
-
-AminetDoor follows Mystic-native navigation conventions: arrow keys move, Enter
-opens, and ESC returns or exits. Q is retained as an ESC-compatible alias.
-
-Main menu:
-
-```text
-R  Recent uploads
-B  Browse Aminet
-S  Search Aminet
-P  Package of the Day
-F  Favorites
-A  About
-Q  Return to BBS
-```
-
-Browse navigation uses an inline catalog mirroring Aminet's public category
-tree, so temporary `/tree` outages do not disable category navigation. Package
-listings remain live. Within Browse, `B` goes back one level, `R` returns to the
-root, and `J` jumps directly to a category path such as `game/shoot`, `comm/net`,
-or `dev/cross`. Search uses Aminet's public search interface with a maximum
-query length of 60 characters. Both modes open the same README reader as Recent.
-
-Architecture filtering is configured in `aminetdoor.mpy`:
+Configuration constants are near the top of `aminetdoor.mpy`. Common choices
+are:
 
 ```python
 ARCHITECTURE_FILTER = ("m68k-amigaos", "generic")
-```
-
-The default targets classic 68k Amiga users while retaining architecture-
-independent Aminet content. Set `ARCHITECTURE_FILTER = None` to show all
-architectures. The filter applies to Browse package lists and Search; Recent
-remains unfiltered because its RSS feed does not expose reliable architecture
-metadata.
-
-Package of the Day selects one deterministic package from the current Recent
-feed. All callers see the same spotlight for the same local calendar day. Its
-candidate pool inherits Recent's unfiltered architecture behavior.
-
-Favorites are per-user bookmarks stored locally on the BBS under
-`data/users/favorites` by default. Press `F` in package selectors, the README
-reader, or Package of the Day to toggle a bookmark; use `F` from the main menu
-to open Favorites and `D` to remove one. Favorites are not sent to Aminet or
-synced externally. Set `USER_DATA_DIR` to an absolute path when the Mystic
-working directory is not stable:
-
-```python
+RESULT_SELECTOR = "lightbar"       # or "numbered"
+CACHE_ENABLED = True
+CACHE_DIR = "cache/readme"
+CACHE_MAX_AGE_SECONDS = 86400
 USER_DATA_DIR = "data/users"
 ```
 
-README text caching is configured in the same script:
+Set `ARCHITECTURE_FILTER = None` for unfiltered Browse and Search results.
+Recent stays unfiltered because its feed lacks reliable architecture metadata.
+Relative storage paths use Mystic's process working directory; absolute paths
+are recommended when that directory is not stable.
 
-```python
-CACHE_ENABLED = True
-CACHE_DIR = "cache/readme"  # relative to Mystic's process working directory
-CACHE_MAX_AGE_SECONDS = 86400
+Favorites are stored as per-user local JSON under `USER_DATA_DIR/favorites`.
+README cache entries are bounded JSON containing text only. Storage failures
+fail open: Favorites may become unavailable and cache operations are bypassed,
+while Browse, Search, Recent, and README fetching continue. A stale README can
+be served when a refresh encounters a transient network failure. Archives,
+HTML, RSS, credentials, cookies, and executable content are never cached.
+
+## Controls
+
+Arrow keys move, Enter selects, and ESC goes back, cancels, or exits the
+current context. Q is an ESC-compatible alias. Main-menu keys are `R` Recent,
+`B` Browse, `S` Search, `P` Package of the Day, `F` Favorites, and `A` About.
+Browse also supports `B` (parent), `R` (root), and `J` (validated category
+path). The README reader uses `N` and `P` for paging. Favorites can be toggled
+with `F` in package contexts and removed with `D` in the Favorites screen.
+
+## Network and scope
+
+Aminet responses are treated as untrusted input and bounded before parsing.
+RSS/XML uses `xml.etree.ElementTree`; Browse/Search HTML uses
+`html.parser.HTMLParser`. All Aminet operations are read-only.
+
+Intentional non-goals include downloads, uploads, Aminet accounts, credentials,
+cookies, archive or HTML caching, mirrors, screenshots, and caller-selectable
+architecture settings. The inline category catalog is navigation data only;
+package listings and metadata remain live.
+
+## Validation and release status
+
+Version 1.0.0 represents the first stable release. Automated tests are
+offline and mock network calls; the door has also been operated successfully
+under Mystic BBS. Run the complete release gate with:
+
+```bash
+python3 scripts/release_check.py
 ```
 
-Relative `CACHE_DIR` values use Mystic's process working directory; set an
-absolute path when the deployment working directory is not stable. The cache
-stores only bounded JSON README text and uses stale content if a refresh fails
-at the network layer. Cache/filesystem failures bypass caching and continue
-with the normal Aminet fetch. Cached package content remains subject to its
-original authors' copyright and licensing terms.
-
-Recent uploads (default lightbar selector):
-
-```text
-Up / Down  Move selection
-Enter      Read selected package
-ESC / Q    Return to the main menu
-```
-
-ESC acts as Back/Cancel throughout AminetDoor. It exits the main menu,
-selectors, Search input, the README reader, About, and error/pause screens.
-
-Set `RESULT_SELECTOR = "numbered"` near the top of `aminetdoor.mpy` to use
-multi-digit numbered input instead. Invalid selector values safely fall back
-to numbered mode. Lightbar Up/Down uses Mystic-native extended key handling;
-the baseline layout remains 80x25.
-
-README reader:
-
-```text
-N  Next page
-P  Previous page
-ESC / Q  Return to the package list
-```
-
-## Aminet endpoints
-
-M0 uses Aminet's public RSS feed at:
-
-```text
-https://aminet.net/feed
-```
-
-and fetches the matching plain-text `.readme` file for a selected package
-directly from `https://aminet.net/<path>.readme`. No scraping of Aminet's
-HTML pages is performed in M0; RSS/XML is used because it is far more stable
-to parse than HTML that can change layout at any time.
-
-M1 Browse reads `GET https://aminet.net/tree` with the `path` query parameter
-for category levels. M1.1 package listings use Aminet's verified Advanced
-Search form with `type=advanced`, `path[]`, `q_arch=AND`, and repeated
-`arch[]` values. M1 Search uses the same Advanced Search architecture fields
-when filtering is enabled; `ARCHITECTURE_FILTER = None` retains the original
-simple `GET https://aminet.net/search?query=...` request. Responses are parsed
-with Python's standard-library `html.parser` and are bounded before parsing.
-
-## Scope
-
-M1.2 intentionally stays read-only. It does not include interactive
-architecture selection, package archive caching, a "package of the day"
-random spotlight, screenshots, downloads, uploads, or account functionality.
-See `docs/M1.md`.
-
-Automated/offline validation: complete. Live Mystic validation: pending.
+See [docs/RELEASE.md](docs/RELEASE.md) for the release checklist.
 
 ## Licensing
 
-AminetDoor source code: MIT License.
-
-Package descriptions and README text retrieved from Aminet remain the
-property of their original authors and are not relicensed by AminetDoor's
-MIT license. See `docs/LICENSING.md`.
-
-## Project layout
-
-```text
-AminetDoor-mpy/
-├── aminetdoor.mpy
-├── README.md
-├── CHANGELOG.md
-├── LICENSE
-├── AGENTS.md
-├── SECURITY.md
-├── docs/
-│   ├── INSTALL.md
-│   ├── LICENSING.md
-│   └── M0.md
-└── tests/
-    └── test_helpers.py
-```
+AminetDoor source code is MIT licensed. Package descriptions, README text, and
+metadata retrieved from Aminet remain the property of their respective authors
+and are not relicensed by AminetDoor. See
+[docs/LICENSING.md](docs/LICENSING.md).

@@ -2,7 +2,7 @@
 
 ## 1. Verify Mystic Python 3
 
-Mystic BBS must be configured with Python 3 support.
+Mystic BBS must be configured with Python 3.6 or newer support.
 
 A Mystic Python script normally imports:
 
@@ -87,7 +87,7 @@ parser issue.
 
 ### Aminet request timed out
 
-M0 uses a 10-second timeout so a remote caller is not left hanging
+AminetDoor uses a 10-second timeout so a remote caller is not left hanging
 indefinitely.
 
 ### Aminet returned an unreadable feed
@@ -96,4 +96,4 @@ Aminet's RSS feed occasionally has brief downtime windows (see Aminet's own
 status notices). Retry after a few minutes; this is reported as a friendly
 error rather than a traceback.
 
-Automated/offline validation: complete. Live Mystic validation: pending.
+Automated/offline validation and live Mystic BBS operation have been completed.

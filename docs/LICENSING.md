@@ -8,5 +8,6 @@ under AminetDoor's MIT License. SysOps and redistributors should preserve
 the applicable authors' licensing and attribution requirements when storing,
 redistributing, or republishing package content.
 
-AminetDoor M0 does not ship an offline mirror of Aminet and does not
-permanently store package content beyond a single request/response cycle.
+AminetDoor does not ship an offline mirror of Aminet. Its optional local cache
+stores only bounded README text as JSON; cached remote content remains subject
+to its original authors' copyright and licensing terms.

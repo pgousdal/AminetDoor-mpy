@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.0 — M1.7 Release Readiness
+
+- Aligned user, installation, licensing, and milestone documentation with the
+  complete implemented feature set and confirmed live Mystic operation.
+- Normalized runtime and diagnostic version reporting to 1.0.0.
+- Added deterministic release validation and a manual release checklist.
+- Added no major functional scope; this release prepares the mature M1.6 door
+  for its first stable release.
+
 ## M1.5 Package of the Day
 
 - Added a deterministic daily spotlight sourced from the existing Recent feed.

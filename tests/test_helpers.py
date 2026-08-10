@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""Offline smoke tests for AminetDoor M0 helper functions."""
+"""Offline tests for AminetDoor helpers and interaction flows."""
 
 import importlib.machinery
 import importlib.util
